@@ -1,0 +1,31 @@
+name: call_queue_service
+
+# Прод-вариант: network_mode: host (Postgres на сервере слушает только 127.0.0.1).
+# Сервис живёт под panel.prav-buro.ru/callqueue (фронтенд) и
+# panel.prav-buro.ru/callqueue-api (backend) — раздельные префиксы, т.к. у backend'а
+# нет /api-префикса (маршруты /auth, /queue напрямую), собственный логин, не через хаб.
+#
+# Запуск:
+#   docker compose -f docker-compose.prod.yml up -d --build
+
+services:
+  backend:
+    build: ./backend
+    container_name: call_queue_backend
+    network_mode: host
+    env_file: .env
+    environment:
+      MEGAFON_STATS_FORWARD_URL: "http://127.0.0.1:8043/megafon/webhook"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 127.0.0.1 --port 8001"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_BASE_URL: "https://panel.prav-buro.ru/callqueue-api"
+        DEPLOY_BASE_PATH: "/callqueue/"
+    container_name: call_queue_frontend
+    network_mode: host
+    restart: unless-stopped
