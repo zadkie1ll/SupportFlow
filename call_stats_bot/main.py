@@ -74,7 +74,7 @@ def _miniapp_markup() -> dict | None:
 def _analysis_service() -> DailyAnalysisService | None:
     global _daily_analysis_service
     settings = get_settings()
-    if not settings.openai_api_key:
+    if not settings.analysis_enabled or not settings.openai_api_key:
         return None
     if _daily_analysis_service is None:
         analyzer = CallAnalyzer(
@@ -98,7 +98,12 @@ async def _run_daily_analysis(day: date, *, notify: bool = True) -> dict[str, in
     if service is None:
         store = _store()
         store.begin_daily_report(day, settings.timezone, employees)
-        store.mark_daily_report_attention(day, "CALLBOT_OPENAI_API_KEY is not configured")
+        reason = (
+            "Daily analysis is temporarily disabled"
+            if not settings.analysis_enabled
+            else "CALLBOT_OPENAI_API_KEY is not configured"
+        )
+        store.mark_daily_report_attention(day, reason)
         return {"status": "attention", "completed": 0, "failed": 0, "skipped": 0}
     result = await service.run(day, employees)
     if notify:

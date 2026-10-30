@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     miniapp_public_url: str = ""
     miniapp_auth_max_age_seconds: int = 86400
     openai_api_key: str = ""
+    analysis_enabled: bool = True
     transcription_model: str = "gpt-4o-transcribe-diarize"
     call_summary_model: str = "gpt-5-mini"
     analysis_concurrency: int = 2
