@@ -71,19 +71,20 @@ def _store() -> CallStore:
     return CallStore(get_settings().database_path)
 
 
-@router.get("/miniapp", include_in_schema=False)
+@router.get("/support", include_in_schema=False)
+@router.get("/support/", include_in_schema=False)
 async def miniapp_page() -> FileResponse:
     return FileResponse(Path(__file__).with_name("static") / "miniapp.html")
 
 
-@router.get("/api/reports")
+@router.get("/api/support/reports")
 async def reports(
     limit: int = Query(default=31, ge=1, le=180), _: dict = Depends(require_admin)
 ) -> dict:
     return {"items": _store().recent_reports(limit)}
 
 
-@router.get("/api/reports/{report_day}")
+@router.get("/api/support/reports/{report_day}")
 async def report_detail(report_day: date, _: dict = Depends(require_admin)) -> dict:
     settings = get_settings()
     result = _store().report_detail(report_day, settings.timezone)
@@ -92,7 +93,7 @@ async def report_detail(report_day: date, _: dict = Depends(require_admin)) -> d
     return result
 
 
-@router.get("/api/reports/{report_day}/employees/{extension}/calls")
+@router.get("/api/support/reports/{report_day}/employees/{extension}/calls")
 async def employee_calls(
     report_day: date, extension: str, _: dict = Depends(require_admin)
 ) -> dict:
@@ -103,7 +104,7 @@ async def employee_calls(
     return {"day": report_day.isoformat(), "extension": extension, "items": calls}
 
 
-@router.get("/api/calls/{call_id}")
+@router.get("/api/support/calls/{call_id}")
 async def call_detail(call_id: str, _: dict = Depends(require_admin)) -> dict:
     result = _store().call_detail(call_id, get_settings().timezone)
     if result is None:

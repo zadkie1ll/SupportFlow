@@ -130,12 +130,12 @@
     async function selectDay(day) {
       state.day=day; state.extension=null; state.calls=[]; renderDates();
       el("content").innerHTML='<div class="state"><div class="spinner"></div>Загружаем день</div>';
-      try { state.report=await api(`/api/reports/${day}`); renderReport(); } catch(error){ setError(error); }
+      try { state.report=await api(`/api/support/reports/${day}`); renderReport(); } catch(error){ setError(error); }
     }
     async function loadCalls(extension) {
       state.extension=extension; state.calls=[]; renderReport();
       el("callsArea").innerHTML='<div class="section-head"><h2>Звонки</h2></div><div class="state"><div class="spinner"></div>Загружаем звонки</div>';
-      try { const data=await api(`/api/reports/${state.day}/employees/${encodeURIComponent(extension)}/calls`); state.calls=data.items; renderReport(); renderCalls(); }
+      try { const data=await api(`/api/support/reports/${state.day}/employees/${encodeURIComponent(extension)}/calls`); state.calls=data.items; renderReport(); renderCalls(); }
       catch(error){ el("callsArea").innerHTML=`<div class="state">${esc(error.message)}</div>`; }
     }
     function callSummary(call) {
@@ -161,12 +161,12 @@
       const detail=card.querySelector(".detail"), button=card.querySelector(".open-call");
       if(detail.dataset.open){ detail.innerHTML=""; delete detail.dataset.open; button.textContent="Полная расшифровка"; return; }
       button.disabled=true; button.textContent="Загрузка…";
-      try { const call=await api(`/api/calls/${encodeURIComponent(card.dataset.id)}`); const turns=call.segments||[];
+      try { const call=await api(`/api/support/calls/${encodeURIComponent(card.dataset.id)}`); const turns=call.segments||[];
         detail.innerHTML=`<div class="transcript">${turns.length?turns.map(turn=>`<div class="turn ${esc(turn.speaker)}"><b>${turn.speaker==='manager'?'Менеджер':turn.speaker==='client'?'Клиент':'Спикер'}</b>${esc(turn.text||"")}</div>`).join(""):`<div class="turn"><b>Расшифровка</b>${esc(call.transcript_text||"Нет текста")}</div>`}</div>`;
         detail.dataset.open="1"; button.textContent="Свернуть расшифровку";
       } catch(error){ detail.innerHTML=`<div class="state">${esc(error.message)}</div>`; button.textContent="Повторить"; } finally { button.disabled=false; }
     }
-    (async()=>{ try { const data=await api("/api/reports"); state.reports=data.items||[]; if(!state.reports.length){ el("content").innerHTML='<div class="state">Пока нет сформированных ежедневных отчётов</div>'; el("reportStatus").textContent='● Отчётов пока нет'; return; } await selectDay(state.reports[0].report_day); } catch(error){ setError(error); } })();
+    (async()=>{ try { const data=await api("/api/support/reports"); state.reports=data.items||[]; if(!state.reports.length){ el("content").innerHTML='<div class="state">Пока нет сформированных ежедневных отчётов</div>'; el("reportStatus").textContent='● Отчётов пока нет'; return; } await selectDay(state.reports[0].report_day); } catch(error){ setError(error); } })();
   </script>
 </body>
 </html>

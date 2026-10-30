@@ -44,7 +44,7 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 
 ## Отчёты и расшифровки в Telegram Mini App
 
-Укажите публичный HTTPS-адрес страницы `/miniapp` в
+Укажите публичный HTTPS-адрес страницы `/support/` в
 `CALLBOT_MINIAPP_PUBLIC_URL`. В ежедневном сообщении и команде `/start`
 появится кнопка «Отчёты и звонки». Доступ к API Mini App проверяется по
 подписи Telegram и разрешён только пользователям из
