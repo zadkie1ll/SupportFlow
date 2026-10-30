@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     substitution_poll_seconds: int = 60
     employee_poll_seconds: int = 300
     telegram_polling_enabled: bool = False
+    miniapp_public_url: str = ""
+    miniapp_auth_max_age_seconds: int = 86400
+    openai_api_key: str = ""
+    transcription_model: str = "gpt-4o-transcribe-diarize"
+    call_summary_model: str = "gpt-5-mini"
+    analysis_concurrency: int = 2
+    analysis_download_timeout_seconds: int = 120
+    analysis_max_audio_bytes: int = 104857600
 
     @property
     def chat_ids(self) -> list[int]:
@@ -72,6 +80,10 @@ class Settings(BaseSettings):
         if len(set(result.values())) != len(result):
             raise ValueError("Every telephony employee must map to a unique Bitrix user")
         return result
+
+    @property
+    def normalized_miniapp_url(self) -> str:
+        return self.miniapp_public_url.strip().rstrip("/")
 
 
 @lru_cache

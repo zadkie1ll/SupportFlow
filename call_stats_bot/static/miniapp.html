@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>SupportFlow · звонки</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: var(--tg-theme-secondary-bg-color, #f3f5f8);
+      --surface: var(--tg-theme-bg-color, #fff);
+      --text: var(--tg-theme-text-color, #172033);
+      --muted: var(--tg-theme-hint-color, #7c879d);
+      --accent: var(--tg-theme-button-color, #4169e1);
+      --accent-text: var(--tg-theme-button-text-color, #fff);
+      --line: color-mix(in srgb, var(--muted) 22%, transparent);
+      --green: #23a55a; --yellow: #d89a00; --red: #d94b4b; --blue: #4169e1;
+      --radius: 20px;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    button { font: inherit; }
+    .shell { max-width: 760px; margin: 0 auto; padding: max(18px,env(safe-area-inset-top)) 14px calc(32px + env(safe-area-inset-bottom)); }
+    .hero { position: relative; overflow: hidden; padding: 24px; border-radius: 26px; color: #fff; background: linear-gradient(135deg,#243b85,#496ff2 58%,#6a8cff); box-shadow: 0 16px 40px #254cb33d; }
+    .hero::after { content:""; position:absolute; width:180px; height:180px; border-radius:50%; right:-70px; top:-80px; background:#ffffff1f; }
+    .eyebrow { opacity:.78; font-size:12px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; }
+    h1 { margin:6px 0 4px; font-size:27px; line-height:1.1; }
+    .hero p { margin:0; opacity:.82; }
+    .date-strip { display:flex; gap:8px; overflow:auto; padding:15px 1px 6px; scrollbar-width:none; }
+    .date-strip::-webkit-scrollbar { display:none; }
+    .date-chip { flex:0 0 auto; border:0; border-radius:14px; padding:9px 13px; background:var(--surface); color:var(--text); box-shadow:0 4px 18px #1f31500d; }
+    .date-chip.active { color:var(--accent-text); background:var(--accent); }
+    .section-head { display:flex; justify-content:space-between; align-items:end; margin:20px 3px 10px; }
+    .section-head h2 { margin:0; font-size:19px; }
+    .section-head span { color:var(--muted); font-size:13px; }
+    .metrics { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; }
+    .metric { padding:15px 12px; border-radius:18px; background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
+    .metric strong { display:block; font-size:21px; }
+    .metric span { color:var(--muted); font-size:12px; }
+    .managers { display:grid; gap:10px; }
+    .manager { width:100%; border:1px solid transparent; display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center; text-align:left; padding:15px; border-radius:var(--radius); background:var(--surface); color:var(--text); box-shadow:0 5px 22px #1f31500a; }
+    .manager.active { border-color:color-mix(in srgb,var(--accent) 55%,transparent); }
+    .lamp { width:11px; height:11px; border-radius:50%; background:var(--green); box-shadow:0 0 0 5px color-mix(in srgb,var(--green) 14%,transparent); }
+    .lamp.yellow { background:var(--yellow); box-shadow:0 0 0 5px color-mix(in srgb,var(--yellow) 14%,transparent); }
+    .lamp.red { background:var(--red); box-shadow:0 0 0 5px color-mix(in srgb,var(--red) 14%,transparent); }
+    .manager-name { font-weight:750; }
+    .manager-meta { color:var(--muted); font-size:13px; margin-top:2px; }
+    .chevron { color:var(--muted); font-size:20px; }
+    .calls { display:grid; gap:11px; }
+    .call { padding:16px; border-radius:var(--radius); background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
+    .call-top { display:flex; align-items:center; gap:9px; }
+    .call-time { font-weight:800; font-size:17px; }
+    .direction { padding:4px 8px; border-radius:9px; background:color-mix(in srgb,var(--blue) 10%,transparent); color:var(--blue); font-size:12px; font-weight:700; }
+    .duration { margin-left:auto; color:var(--muted); font-size:13px; }
+    .phone { color:var(--muted); margin-top:5px; font-size:13px; }
+    .summary { margin:13px 0 0; padding:12px 13px; border-radius:14px; background:var(--bg); }
+    .summary-label { color:var(--muted); font-size:11px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
+    .summary p { margin:5px 0 0; }
+    .facts { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+    .fact { padding:5px 8px; border-radius:9px; background:color-mix(in srgb,var(--accent) 9%,transparent); font-size:12px; }
+    .open-call { width:100%; margin-top:11px; border:0; border-radius:12px; padding:10px; background:var(--accent); color:var(--accent-text); font-weight:700; }
+    .transcript { margin-top:12px; border-top:1px solid var(--line); padding-top:12px; }
+    .turn { padding:10px 12px; margin:7px 0; border-radius:13px; background:var(--bg); white-space:pre-wrap; }
+    .turn.manager { border-left:3px solid var(--blue); }
+    .turn.client { border-left:3px solid var(--green); }
+    .turn b { display:block; font-size:12px; margin-bottom:3px; color:var(--muted); }
+    .state { padding:28px 20px; border-radius:var(--radius); text-align:center; background:var(--surface); color:var(--muted); }
+    .spinner { width:24px; height:24px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; margin:0 auto 10px; }
+    .status-pill { display:inline-flex; align-items:center; gap:6px; margin-top:12px; padding:6px 10px; border-radius:12px; background:#ffffff1a; font-size:12px; }
+    .hidden { display:none !important; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    @media (min-width:640px) { .managers { grid-template-columns:1fr 1fr; } .hero { padding:30px; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="eyebrow">Отдел сопровождения</div>
+      <h1>Разговоры за день</h1>
+      <p id="heroDate">Загрузка отчётов…</p>
+      <div class="status-pill" id="reportStatus">● Подключаем данные</div>
+    </section>
+    <nav class="date-strip" id="dates" aria-label="Дни отчётов"></nav>
+    <section id="content"><div class="state"><div class="spinner"></div>Загружаем отчёт</div></section>
+  </main>
+  <script>
+    const tg = window.Telegram?.WebApp;
+    tg?.ready(); tg?.expand();
+    const initData = tg?.initData || "";
+    const state = { reports: [], day: null, report: null, extension: null, calls: [] };
+    const el = id => document.getElementById(id);
+    const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
+    const duration = seconds => { seconds=Number(seconds||0); const h=Math.floor(seconds/3600), m=Math.floor(seconds%3600/60), s=seconds%60; return [h&&`${h} ч`,m&&`${m} мин`,(!h&&!m||s)&&`${s} сек`].filter(Boolean).join(" "); };
+    const dayLabel = iso => new Intl.DateTimeFormat("ru-RU",{day:"numeric",month:"long",weekday:"short"}).format(new Date(`${iso}T12:00:00`));
+    async function api(path) {
+      if (!initData) throw new Error("Откройте приложение кнопкой внутри Telegram-бота");
+      const response = await fetch(path,{headers:{Authorization:`tma ${initData}`}});
+      if (!response.ok) { const body=await response.json().catch(()=>({})); throw new Error(body.detail||`Ошибка ${response.status}`); }
+      return response.json();
+    }
+    function setError(error) { el("content").innerHTML=`<div class="state">${esc(error.message||error)}</div>`; el("reportStatus").textContent="● Нет доступа"; }
+    function renderDates() {
+      el("dates").innerHTML=state.reports.map(r=>`<button class="date-chip ${r.report_day===state.day?'active':''}" data-day="${r.report_day}">${esc(dayLabel(r.report_day))}</button>`).join("");
+      el("dates").querySelectorAll("button").forEach(button=>button.onclick=()=>selectDay(button.dataset.day));
+    }
+    function reportLamp(item) { if(item.analysis_errors) return "red"; if(item.recordings>item.analysis_completed) return "yellow"; return ""; }
+    function renderReport() {
+      const report=state.report, people=Object.entries(report.employees||{});
+      el("heroDate").textContent=dayLabel(report.report_day);
+      el("reportStatus").textContent=report.status==="processing"?"● Расшифровки формируются":report.status==="attention"?"● Есть ошибки обработки":"● Отчёт готов";
+      const totalDuration=people.reduce((sum,[,x])=>sum+Number(x.duration_seconds||0),0);
+      el("content").innerHTML=`
+        <div class="section-head"><h2>Итоги</h2><span>${esc(report.total_calls)} звонков</span></div>
+        <section class="metrics">
+          <div class="metric"><strong>${report.total_calls}</strong><span>всего звонков</span></div>
+          <div class="metric"><strong>${duration(totalDuration)}</strong><span>общая длительность</span></div>
+          <div class="metric"><strong>${report.completed_calls}</strong><span>расшифровано</span></div>
+        </section>
+        <div class="section-head"><h2>Менеджеры</h2><span>нажмите для звонков</span></div>
+        <section class="managers">${people.map(([ext,item])=>`
+          <button class="manager ${state.extension===ext?'active':''}" data-ext="${esc(ext)}">
+            <span class="lamp ${reportLamp(item)}"></span><span><div class="manager-name">${esc(item.name)}</div>
+            <div class="manager-meta">${item.calls} звонков · ${duration(item.duration_seconds)} · ${item.analysis_completed}/${item.recordings} расшифровок</div></span><span class="chevron">›</span>
+          </button>`).join("")}</section>
+        <div id="callsArea"></div>`;
+      document.querySelectorAll(".manager").forEach(button=>button.onclick=()=>loadCalls(button.dataset.ext));
+      if(state.extension) renderCalls();
+    }
+    async function selectDay(day) {
+      state.day=day; state.extension=null; state.calls=[]; renderDates();
+      el("content").innerHTML='<div class="state"><div class="spinner"></div>Загружаем день</div>';
+      try { state.report=await api(`/api/reports/${day}`); renderReport(); } catch(error){ setError(error); }
+    }
+    async function loadCalls(extension) {
+      state.extension=extension; state.calls=[]; renderReport();
+      el("callsArea").innerHTML='<div class="section-head"><h2>Звонки</h2></div><div class="state"><div class="spinner"></div>Загружаем звонки</div>';
+      try { const data=await api(`/api/reports/${state.day}/employees/${encodeURIComponent(extension)}/calls`); state.calls=data.items; renderReport(); renderCalls(); }
+      catch(error){ el("callsArea").innerHTML=`<div class="state">${esc(error.message)}</div>`; }
+    }
+    function callSummary(call) {
+      if(call.analysis_status==="processing"||call.analysis_status==="pending") return '<div class="summary"><div class="summary-label">Выжимка</div><p>Формируется…</p></div>';
+      if(call.analysis_status==="error") return '<div class="summary"><div class="summary-label">Выжимка</div><p>Не удалось обработать запись</p></div>';
+      if(!call.summary_text) return '<div class="summary"><div class="summary-label">Выжимка</div><p>Для звонка нет доступной записи</p></div>';
+      const facts=[...(call.summary?.important_facts||[]),...(call.summary?.next_steps||[])].slice(0,4);
+      return `<div class="summary"><div class="summary-label">Кратко</div><p>${esc(call.summary_text)}</p>${facts.length?`<div class="facts">${facts.map(x=>`<span class="fact">${esc(x)}</span>`).join("")}</div>`:""}</div>`;
+    }
+    function renderCalls() {
+      const manager=state.report.employees[state.extension];
+      const area=el("callsArea"); if(!area) return;
+      area.innerHTML=`<div class="section-head"><h2>Звонки · ${esc(manager.name)}</h2><span>${state.calls.length}</span></div>
+        <section class="calls">${state.calls.length?state.calls.map(call=>{ const dt=new Date(call.started_at); const incoming=["in","incoming"].includes(String(call.direction).toLowerCase()); return `
+          <article class="call" data-id="${esc(call.call_id)}"><div class="call-top"><span class="call-time">${dt.toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"})}</span>
+          <span class="direction">${incoming?'↙ Входящий':'↗ Исходящий'}</span><span class="duration">${duration(call.duration_seconds)}</span></div>
+          <div class="phone">${esc(call.client_phone||"Номер не указан")}</div>${callSummary(call)}
+          ${call.analysis_status==="completed"?'<button class="open-call">Полная расшифровка</button>':''}<div class="detail"></div></article>`;}).join(""):'<div class="state">У менеджера нет звонков за этот день</div>'}</section>`;
+      area.querySelectorAll(".open-call").forEach(button=>button.onclick=()=>openCall(button.closest(".call")));
+      area.scrollIntoView({behavior:"smooth",block:"start"});
+    }
+    async function openCall(card) {
+      const detail=card.querySelector(".detail"), button=card.querySelector(".open-call");
+      if(detail.dataset.open){ detail.innerHTML=""; delete detail.dataset.open; button.textContent="Полная расшифровка"; return; }
+      button.disabled=true; button.textContent="Загрузка…";
+      try { const call=await api(`/api/calls/${encodeURIComponent(card.dataset.id)}`); const turns=call.segments||[];
+        detail.innerHTML=`<div class="transcript">${turns.length?turns.map(turn=>`<div class="turn ${esc(turn.speaker)}"><b>${turn.speaker==='manager'?'Менеджер':turn.speaker==='client'?'Клиент':'Спикер'}</b>${esc(turn.text||"")}</div>`).join(""):`<div class="turn"><b>Расшифровка</b>${esc(call.transcript_text||"Нет текста")}</div>`}</div>`;
+        detail.dataset.open="1"; button.textContent="Свернуть расшифровку";
+      } catch(error){ detail.innerHTML=`<div class="state">${esc(error.message)}</div>`; button.textContent="Повторить"; } finally { button.disabled=false; }
+    }
+    (async()=>{ try { const data=await api("/api/reports"); state.reports=data.items||[]; if(!state.reports.length){ el("content").innerHTML='<div class="state">Пока нет сформированных ежедневных отчётов</div>'; el("reportStatus").textContent='● Отчётов пока нет'; return; } await selectDay(state.reports[0].report_day); } catch(error){ setError(error); } })();
+  </script>
+</body>
+</html>

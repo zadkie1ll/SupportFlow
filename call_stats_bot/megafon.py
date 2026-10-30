@@ -14,6 +14,11 @@ class CallHistoryEvent:
     started_at: datetime
     duration_seconds: int
     status: str
+    direction: str
+    client_phone: str
+    company_phone: str
+    recording_url: str
+    ats_user: str
 
 
 async def fetch_employee_names(
@@ -77,4 +82,11 @@ def parse_history_event(data: dict[str, Any]) -> CallHistoryEvent | None:
         started_at=started_at,
         duration_seconds=duration,
         status=str(data.get("status", "")),
+        direction=str(data.get("type") or data.get("direction") or ""),
+        client_phone=str(data.get("phone") or data.get("client") or ""),
+        company_phone=str(data.get("telnum") or data.get("diversion") or ""),
+        recording_url=str(
+            data.get("link") or data.get("record") or data.get("recording_url") or ""
+        ).strip(),
+        ats_user=str(data.get("user") or ""),
     )

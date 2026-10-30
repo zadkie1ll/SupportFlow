@@ -11,20 +11,25 @@ from zoneinfo import ZoneInfo
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 
+from call_stats_bot.analysis import CallAnalyzer, DailyAnalysisService
 from call_stats_bot.config import get_settings
 from call_stats_bot.employee_roster import EmployeeRoster
 from call_stats_bot.bitrix import BitrixClient
 from call_stats_bot.megafon import fetch_employee_names, parse_history_event
+from call_stats_bot.miniapp import router as miniapp_router
 from call_stats_bot.report import build_daily_report
 from call_stats_bot.store import CallStore
 from call_stats_bot.substitutions import SubstitutionService, SubstitutionStore
-from call_stats_bot.telegram import answer_callback_query, edit_message, get_updates, send_message
+from call_stats_bot.telegram import (
+    answer_callback_query, edit_message, get_updates, send_message, web_app_keyboard,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("call-stats-bot")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 _employee_roster: EmployeeRoster | None = None
+_daily_analysis_service: DailyAnalysisService | None = None
 
 
 def _store() -> CallStore:
@@ -47,15 +52,67 @@ def _substitution_service() -> SubstitutionService | None:
 async def _send_report(day: date) -> None:
     settings = get_settings()
     employees = await _employee_names()
-    text = build_daily_report(_store(), day, settings.timezone, employees)
+    store = _store()
+    store.begin_daily_report(day, settings.timezone, employees)
+    text = build_daily_report(store, day, settings.timezone, employees)
+    markup = _miniapp_markup()
 
     async def send_to_chat(chat_id: int) -> None:
         try:
-            await send_message(settings.telegram_bot_token, chat_id, text)
+            await send_message(settings.telegram_bot_token, chat_id, text, markup)
         except Exception:
             logger.exception("Cannot send daily report to chat_id=%s", chat_id)
 
     await asyncio.gather(*(send_to_chat(chat_id) for chat_id in settings.chat_ids))
+
+
+def _miniapp_markup() -> dict | None:
+    url = get_settings().normalized_miniapp_url
+    return web_app_keyboard(url) if url else None
+
+
+def _analysis_service() -> DailyAnalysisService | None:
+    global _daily_analysis_service
+    settings = get_settings()
+    if not settings.openai_api_key:
+        return None
+    if _daily_analysis_service is None:
+        analyzer = CallAnalyzer(
+            api_key=settings.openai_api_key,
+            transcription_model=settings.transcription_model,
+            summary_model=settings.call_summary_model,
+            download_timeout_seconds=settings.analysis_download_timeout_seconds,
+            max_audio_bytes=settings.analysis_max_audio_bytes,
+        )
+        _daily_analysis_service = DailyAnalysisService(
+            _store(), analyzer, timezone=settings.timezone,
+            concurrency=settings.analysis_concurrency,
+        )
+    return _daily_analysis_service
+
+
+async def _run_daily_analysis(day: date, *, notify: bool = True) -> dict[str, int | str]:
+    settings = get_settings()
+    employees = await _employee_names()
+    service = _analysis_service()
+    if service is None:
+        store = _store()
+        store.begin_daily_report(day, settings.timezone, employees)
+        store.mark_daily_report_attention(day, "CALLBOT_OPENAI_API_KEY is not configured")
+        return {"status": "attention", "completed": 0, "failed": 0, "skipped": 0}
+    result = await service.run(day, employees)
+    if notify:
+        text = (
+            f"✅ <b>Анализ звонков за {day.strftime('%d.%m.%Y')} готов</b>\n"
+            f"Расшифровано: {result['completed']} · Ошибок: {result['failed']} · "
+            f"Без записи: {result['skipped']}"
+        )
+        await asyncio.gather(*(
+            send_message(
+                settings.telegram_bot_token, chat_id, text, _miniapp_markup()
+            ) for chat_id in settings.chat_ids
+        ), return_exceptions=True)
+    return result
 
 
 async def _employee_names() -> dict[str, str]:
@@ -86,6 +143,13 @@ async def _report_loop() -> None:
             next_run += timedelta(days=1)
         await asyncio.sleep((next_run - now).total_seconds())
         await _send_report(next_run.date())
+        try:
+            await _run_daily_analysis(next_run.date())
+        except Exception:
+            logger.exception("Daily call analysis failed for %s", next_run.date())
+            _store().mark_daily_report_attention(
+                next_run.date(), "Unexpected daily analysis failure"
+            )
 
 
 def _user_name(user: dict) -> str:
@@ -466,15 +530,29 @@ async def _handle_telegram_update(update: dict, service: SubstitutionService | N
                 "/bitrix_users — сотрудники и ID\n"
                 "/replacements — состояние"
             )
-        markup = None
+        markup = _miniapp_markup()
         if command == "/start" and service is not None:
-            markup = _inline_keyboard(
-                [[("➕ Создать замещение", "sub:new")], [("📋 Текущие операции", "sub:list")]]
+            rows = list((markup or {}).get("inline_keyboard", []))
+            rows.extend(
+                _inline_keyboard(
+                    [[("➕ Создать замещение", "sub:new")],
+                     [("📋 Текущие операции", "sub:list")]]
+                )["inline_keyboard"]
             )
+            markup = {"inline_keyboard": rows}
         await send_message(settings.telegram_bot_token, int(chat_id), report, markup)
         return
 
     if sender_id not in settings.admin_ids:
+        return
+    if command == "/analyze_today":
+        today = datetime.now(ZoneInfo(settings.timezone)).date()
+        await send_message(
+            settings.telegram_bot_token, int(chat_id),
+            f"Запускаю анализ звонков за {today.strftime('%d.%m.%Y')}. Результат сохранится в отчёте.",
+            _miniapp_markup(),
+        )
+        asyncio.create_task(_run_daily_analysis(today))
         return
     if service is None:
         await send_message(settings.telegram_bot_token, int(chat_id), "Bitrix24 ещё не настроен.")
@@ -654,6 +732,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="MegaFon call stats bot", lifespan=lifespan)
+app.include_router(miniapp_router)
 
 
 async def _request_data(request: Request) -> dict:
@@ -693,6 +772,11 @@ async def megafon_webhook(request: Request) -> dict[str, str]:
         started_at=event.started_at,
         duration_seconds=event.duration_seconds,
         status=event.status,
+        direction=event.direction,
+        client_phone=event.client_phone,
+        company_phone=event.company_phone,
+        recording_url=event.recording_url,
+        ats_user=event.ats_user,
     )
     return {"status": "ok"}
 

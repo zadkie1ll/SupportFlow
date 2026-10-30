@@ -51,6 +51,11 @@ async def send_message(
         return int((payload.get("result") or {}).get("message_id", 0))
 
 
+def web_app_keyboard(url: str, label: str = "📞 Отчёты и звонки") -> dict:
+    """Build a native Telegram Mini App button."""
+    return {"inline_keyboard": [[{"text": label, "web_app": {"url": url}}]]}
+
+
 async def edit_message(
     token: str,
     chat_id: int,
