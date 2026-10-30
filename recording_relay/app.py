@@ -3,13 +3,15 @@ from __future__ import annotations
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from starlette.background import BackgroundTask
 from starlette.responses import StreamingResponse
 
 
 app = FastAPI(title="SupportFlow recording relay", docs_url=None, redoc_url=None)
 ALLOWED_HOSTS = {"vats671653.megapbx.ru"}
+MEGAFON_API_BASE = "https://vats671653.megapbx.ru/crmapi/v1"
+ALLOWED_API_RESOURCES = {"users", "history"}
 MAX_REDIRECTS = 3
 
 
@@ -34,6 +36,34 @@ async def _close(response: httpx.Response, client: httpx.AsyncClient) -> None:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/megafon/{resource}")
+async def megafon_api(
+    resource: str,
+    request: Request,
+    relay_api_key: str = Header(alias="X-Relay-Api-Key"),
+    relay_auth_header: str = Header(default="X-API-KEY", alias="X-Relay-Auth-Header"),
+) -> Response:
+    if resource not in ALLOWED_API_RESOURCES:
+        raise HTTPException(status_code=404, detail="MegaFon API resource is not allowed")
+    if relay_auth_header.casefold() != "x-api-key" or not relay_api_key:
+        raise HTTPException(status_code=400, detail="Unsupported MegaFon authorization")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=20)) as client:
+            upstream = await client.get(
+                f"{MEGAFON_API_BASE}/{resource}",
+                params=list(request.query_params.multi_items()),
+                headers={"X-API-KEY": relay_api_key},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="MegaFon API is unavailable") from exc
+    content_type = upstream.headers.get("content-type", "application/json")
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        media_type=content_type.split(";", 1)[0],
+    )
 
 
 @app.get("/recording")

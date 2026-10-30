@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     megafon_api_url: str = ""
     megafon_api_key: str = ""
     megafon_api_auth_header: str = "X-API-KEY"
+    megafon_api_relay_url: str = ""
     report_time: str = "19:00"
     timezone: str = "Europe/Moscow"
     database_path: str = "data/call_stats.sqlite3"

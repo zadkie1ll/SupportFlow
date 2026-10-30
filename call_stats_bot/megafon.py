@@ -27,15 +27,25 @@ async def fetch_employee_names(
     api_key: str,
     auth_header: str,
     employee_ids: set[str],
+    relay_url: str = "",
 ) -> dict[str, str]:
     """Read current employee names from MegaFon CRM API `/users`."""
     if not api_url or not api_key:
         return {}
     async with httpx.AsyncClient(timeout=15) as client:
-        response = await client.get(
-            f"{api_url.rstrip('/')}/users",
-            headers={auth_header: api_key},
-        )
+        if relay_url:
+            response = await client.get(
+                f"{relay_url.rstrip('/')}/users",
+                headers={
+                    "X-Relay-Api-Key": api_key,
+                    "X-Relay-Auth-Header": auth_header,
+                },
+            )
+        else:
+            response = await client.get(
+                f"{api_url.rstrip('/')}/users",
+                headers={auth_header: api_key},
+            )
         response.raise_for_status()
         payload = response.json()
     items = payload.get("items", []) if isinstance(payload, dict) else []

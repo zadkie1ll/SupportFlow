@@ -131,6 +131,7 @@ async def _employee_names() -> dict[str, str]:
                 api_key=settings.megafon_api_key,
                 auth_header=settings.megafon_api_auth_header,
                 employee_ids=set(employees),
+                relay_url=settings.megafon_api_relay_url,
             )
         )
     except Exception:
