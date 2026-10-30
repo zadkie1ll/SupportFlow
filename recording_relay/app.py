@@ -11,7 +11,11 @@ from starlette.responses import StreamingResponse
 app = FastAPI(title="SupportFlow recording relay", docs_url=None, redoc_url=None)
 ALLOWED_HOSTS = {"vats671653.megapbx.ru"}
 MEGAFON_API_BASE = "https://vats671653.megapbx.ru/crmapi/v1"
-ALLOWED_API_RESOURCES = {"users", "history"}
+ALLOWED_API_RESOURCES = {
+    "users": "users",
+    "history": "history",
+    "calls-history": "calls/history",
+}
 MAX_REDIRECTS = 3
 
 
@@ -45,14 +49,15 @@ async def megafon_api(
     relay_api_key: str = Header(alias="X-Relay-Api-Key"),
     relay_auth_header: str = Header(default="X-API-KEY", alias="X-Relay-Auth-Header"),
 ) -> Response:
-    if resource not in ALLOWED_API_RESOURCES:
+    upstream_path = ALLOWED_API_RESOURCES.get(resource)
+    if upstream_path is None:
         raise HTTPException(status_code=404, detail="MegaFon API resource is not allowed")
     if relay_auth_header.casefold() != "x-api-key" or not relay_api_key:
         raise HTTPException(status_code=400, detail="Unsupported MegaFon authorization")
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=20)) as client:
             upstream = await client.get(
-                f"{MEGAFON_API_BASE}/{resource}",
+                f"{MEGAFON_API_BASE}/{upstream_path}",
                 params=list(request.query_params.multi_items()),
                 headers={"X-API-KEY": relay_api_key},
             )
