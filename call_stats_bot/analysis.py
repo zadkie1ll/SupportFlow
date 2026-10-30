@@ -83,6 +83,7 @@ class CallAnalyzer:
     def __init__(
         self, *, api_key: str, transcription_model: str, summary_model: str,
         download_timeout_seconds: int = 120, max_audio_bytes: int = 104857600,
+        recording_relay_url: str = "",
     ):
         if not api_key.strip():
             raise ValueError("CALLBOT_OPENAI_API_KEY is not configured")
@@ -91,6 +92,7 @@ class CallAnalyzer:
         self.summary_model = summary_model
         self.download_timeout_seconds = download_timeout_seconds
         self.max_audio_bytes = max(1, max_audio_bytes)
+        self.recording_relay_url = recording_relay_url.strip()
 
     def _download(self, url: str) -> Path:
         parsed = urlparse(url)
@@ -104,8 +106,11 @@ class CallAnalyzer:
         target = Path(raw_path)
         target.chmod(0o600)
         try:
+            source_url = self.recording_relay_url or url
+            params = {"url": url} if self.recording_relay_url else None
             with httpx.stream(
-                "GET", url, follow_redirects=True, timeout=self.download_timeout_seconds
+                "GET", source_url, params=params, follow_redirects=False,
+                timeout=self.download_timeout_seconds,
             ) as response:
                 response.raise_for_status()
                 content_length = int(response.headers.get("content-length") or 0)

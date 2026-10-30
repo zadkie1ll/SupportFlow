@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     analysis_concurrency: int = 2
     analysis_download_timeout_seconds: int = 120
     analysis_max_audio_bytes: int = 104857600
+    recording_relay_url: str = ""
 
     @property
     def chat_ids(self) -> list[int]:
