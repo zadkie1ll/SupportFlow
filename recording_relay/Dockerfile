@@ -7,5 +7,5 @@ COPY recording_relay ./recording_relay
 
 USER 65534:65534
 EXPOSE 8055
-CMD ["uvicorn", "recording_relay.app:app", "--host", "0.0.0.0", "--port", "8055"]
+CMD ["uvicorn", "recording_relay.app:app", "--host", "0.0.0.0", "--port", "8055", "--no-access-log"]
 
