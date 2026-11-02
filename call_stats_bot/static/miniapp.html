@@ -27,10 +27,9 @@
     .eyebrow { opacity:.78; font-size:12px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; }
     h1 { margin:6px 0 4px; font-size:27px; line-height:1.1; }
     .hero p { margin:0; opacity:.82; }
-    .date-strip { display:flex; gap:8px; overflow:auto; padding:15px 1px 6px; scrollbar-width:none; }
-    .date-strip::-webkit-scrollbar { display:none; }
-    .date-chip { flex:0 0 auto; border:0; border-radius:14px; padding:9px 13px; background:var(--surface); color:var(--text); box-shadow:0 4px 18px #1f31500d; }
-    .date-chip.active { color:var(--accent-text); background:var(--accent); }
+    .report-picker { display:grid; grid-template-columns:auto 1fr; gap:12px; align-items:center; margin-top:14px; padding:12px 14px; border-radius:17px; background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
+    .report-picker span { color:var(--muted); font-size:13px; font-weight:700; }
+    .report-picker select { width:100%; min-width:0; border:1px solid var(--line); border-radius:12px; padding:9px 34px 9px 11px; background:var(--bg); color:var(--text); font:inherit; font-weight:750; }
     .section-head { display:flex; justify-content:space-between; align-items:end; margin:20px 3px 10px; }
     .section-head h2 { margin:0; font-size:19px; }
     .section-head span { color:var(--muted); font-size:13px; }
@@ -89,7 +88,7 @@
       <p id="heroDate">Загрузка отчётов…</p>
       <div class="status-pill" id="reportStatus">● Подключаем данные</div>
     </section>
-    <nav class="date-strip" id="dates" aria-label="Дни отчётов"></nav>
+    <label class="report-picker" id="datePicker"><span>📅 Дата отчёта</span><select id="reportDate" aria-label="Выберите дату отчёта"></select></label>
     <section id="content"><div class="state"><div class="spinner"></div>Загружаем отчёт</div></section>
   </main>
   <script>
@@ -114,8 +113,9 @@
     }
     function setError(error) { el("content").innerHTML=`<div class="state">${esc(error.message||error)}</div>`; el("reportStatus").textContent="● Нет доступа"; }
     function renderDates() {
-      el("dates").innerHTML=state.reports.map(r=>`<button class="date-chip ${r.report_day===state.day?'active':''}" data-day="${r.report_day}">${esc(dayLabel(r.report_day))}</button>`).join("");
-      el("dates").querySelectorAll("button").forEach(button=>button.onclick=()=>selectDay(button.dataset.day));
+      const picker=el("reportDate");
+      picker.innerHTML=state.reports.map(r=>`<option value="${esc(r.report_day)}" ${r.report_day===state.day?'selected':''}>${esc(dayLabel(r.report_day))}</option>`).join("");
+      picker.onchange=()=>selectDay(picker.value);
     }
     function reportLamp(item) { if(item.analysis_errors) return "red"; if(item.recordings>item.analysis_completed) return "yellow"; return ""; }
     function showOverviewHeader() {
