@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from call_stats_bot.config import get_settings
+from call_stats_bot.roles import load_roles
 from call_stats_bot.store import CallStore
 
 
@@ -92,6 +93,13 @@ async def report_detail(report_day: date, _: dict = Depends(require_admin)) -> d
     )
     if result is None:
         raise HTTPException(status_code=404, detail="Report not found")
+    roles = load_roles()
+    for extension, employee in result["employees"].items():
+        role = roles.for_employee(extension)
+        employee["role_key"] = role.key
+        employee["role_title"] = role.title
+        employee["role_objective"] = role.objective
+        employee["role_responsibilities"] = list(role.responsibilities)
     return result
 
 

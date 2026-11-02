@@ -18,11 +18,13 @@ from call_stats_bot.bitrix import BitrixClient
 from call_stats_bot.megafon import fetch_employee_names, parse_history_event
 from call_stats_bot.miniapp import router as miniapp_router
 from call_stats_bot.report import build_daily_report
+from call_stats_bot.roles import load_roles
 from call_stats_bot.store import CallStore
 from call_stats_bot.substitutions import SubstitutionService, SubstitutionStore
 from call_stats_bot.telegram import (
     answer_callback_query, edit_message, get_updates, send_message, web_app_keyboard,
 )
+from call_stats_bot.workload import DailyWorkloadService, WorkloadAnalyzer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("call-stats-bot")
@@ -30,6 +32,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 _employee_roster: EmployeeRoster | None = None
 _daily_analysis_service: DailyAnalysisService | None = None
+_daily_workload_service: DailyWorkloadService | None = None
 
 
 def _store() -> CallStore:
@@ -95,6 +98,26 @@ def _analysis_service() -> DailyAnalysisService | None:
     return _daily_analysis_service
 
 
+def _workload_service() -> DailyWorkloadService | None:
+    global _daily_workload_service
+    settings = get_settings()
+    if not settings.analysis_enabled or not settings.openai_api_key:
+        return None
+    if _daily_workload_service is None:
+        _daily_workload_service = DailyWorkloadService(
+            _store(),
+            WorkloadAnalyzer(
+                api_key=settings.openai_api_key,
+                model=settings.call_summary_model,
+            ),
+            load_roles(),
+            timezone=settings.timezone,
+            report_time=settings.report_time,
+            concurrency=settings.analysis_concurrency,
+        )
+    return _daily_workload_service
+
+
 async def _run_daily_analysis(day: date, *, notify: bool = True) -> dict[str, int | str]:
     settings = get_settings()
     employees = await _report_employee_names()
@@ -112,12 +135,20 @@ async def _run_daily_analysis(day: date, *, notify: bool = True) -> dict[str, in
         store.mark_daily_report_attention(day, reason)
         return {"status": "attention", "completed": 0, "failed": 0, "skipped": 0}
     result = await service.run(day, employees)
+    workload = _workload_service()
+    workload_result = (
+        await workload.run(day, employees)
+        if workload is not None else {"completed": 0, "failed": len(employees)}
+    )
+    result["workload_completed"] = workload_result["completed"]
+    result["workload_failed"] = workload_result["failed"]
     if notify:
         text = (
             f"✅ <b>Анализ звонков до {day.strftime('%d.%m.%Y')} "
             f"{settings.report_time} МСК готов</b>\n"
             f"Расшифровано: {result['completed']} · Ошибок: {result['failed']} · "
-            f"Без записи: {result['skipped']}"
+            f"Без записи: {result['skipped']}\n"
+            f"Анализ занятости: {workload_result['completed']}/{len(employees)}"
         )
         await asyncio.gather(*(
             send_message(

@@ -37,6 +37,21 @@
     .manager-page-head { margin:14px 0 12px; padding:18px; border-radius:var(--radius); background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
     .manager-page-head h2 { margin:0; font-size:22px; }
     .manager-page-head p { margin:5px 0 0; color:var(--muted); }
+    .workload-entry { width:100%; margin-top:14px; border:0; border-radius:18px; padding:15px 16px; text-align:left; background:linear-gradient(135deg,#243b85,#496ff2); color:#fff; font-weight:800; box-shadow:0 10px 28px #254cb32e; }
+    .workload-entry small { display:block; margin-top:3px; opacity:.76; font-weight:500; }
+    .workload-list { display:grid; gap:12px; }
+    .workload-card { padding:17px; border-radius:var(--radius); background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
+    .workload-card h3 { margin:0; font-size:19px; }
+    .role-label { margin-top:3px; color:var(--accent); font-size:13px; font-weight:750; }
+    .level { display:inline-block; margin-top:10px; padding:5px 9px; border-radius:9px; background:color-mix(in srgb,var(--accent) 11%,transparent); color:var(--accent); font-size:12px; font-weight:800; }
+    .workload-metrics { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-top:12px; }
+    .workload-metric { padding:10px; border-radius:12px; background:var(--bg); }
+    .workload-metric b { display:block; font-size:16px; }
+    .workload-metric span { color:var(--muted); font-size:11px; }
+    .analysis-block { margin-top:13px; }
+    .analysis-block h4 { margin:0 0 5px; font-size:13px; }
+    .analysis-block p { margin:0; color:var(--muted); }
+    .analysis-list { margin:5px 0 0; padding-left:18px; color:var(--muted); }
     .metrics { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; }
     .metric { padding:15px 12px; border-radius:18px; background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
     .metric strong { display:block; font-size:21px; }
@@ -95,7 +110,7 @@
     const tg = window.Telegram?.WebApp;
     tg?.ready(); tg?.expand();
     const initData = tg?.initData || "";
-    const state = { reports: [], day: null, report: null, extension: null, calls: [] };
+    const state = { reports: [], day: null, report: null, view: "overview", extension: null, calls: [] };
     const el = id => document.getElementById(id);
     const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
     const duration = seconds => { seconds=Number(seconds||0); const h=Math.floor(seconds/3600), m=Math.floor(seconds%3600/60), s=seconds%60; return [h&&`${h} ч`,m&&`${m} мин`,(!h&&!m||s)&&`${s} сек`].filter(Boolean).join(" "); };
@@ -136,13 +151,16 @@
           <div class="metric"><strong>${report.completed_calls}</strong><span>расшифровано</span></div>
           <div class="metric missed"><strong>${report.missed_calls||0}</strong><span>недозвонов</span></div>
         </section>
+        <button class="workload-entry" id="openWorkload">📊 Анализ занятости<small>Телефонная нагрузка и соответствие ролям сотрудников</small></button>
         <div class="section-head"><h2>Менеджеры</h2><span>нажмите для звонков</span></div>
         <section class="managers">${people.map(([ext,item])=>`
           <button class="manager" data-ext="${esc(ext)}">
             <span class="lamp ${reportLamp(item)}"></span><span><div class="manager-name">${esc(item.name)}</div>
+            <div class="role-label">${esc(item.role_title||"")}</div>
             <div class="manager-meta">${item.calls} звонков · ${duration(item.duration_seconds)} · ${item.analysis_completed}/${item.recordings} расшифровок · <span style="color:var(--red)">${item.missed_calls||0} недозвонов</span></div></span><span class="chevron">›</span>
           </button>`).join("")}</section>`;
       document.querySelectorAll(".manager").forEach(button=>button.onclick=()=>loadCalls(button.dataset.ext));
+      el("openWorkload").onclick=renderWorkloadPage;
     }
     async function selectDay(day) {
       state.day=day; state.extension=null; state.calls=[]; renderDates();
@@ -150,16 +168,41 @@
       try { state.report=await api(`/api/support/reports/${day}`); renderReport(); } catch(error){ setError(error); }
     }
     async function loadCalls(extension) {
-      state.extension=extension; state.calls=[]; renderReport();
+      state.view="manager"; state.extension=extension; state.calls=[]; renderReport();
       renderManagerPage(true);
       try { const data=await api(`/api/support/reports/${state.day}/employees/${encodeURIComponent(extension)}/calls`); state.calls=data.items; renderManagerPage(); }
       catch(error){ renderManagerPage(false,error); }
     }
     function goBack() {
-      state.extension=null; state.calls=[]; renderReport(); renderDates();
+      state.view="overview"; state.extension=null; state.calls=[]; renderReport(); renderDates();
       window.scrollTo({top:0,behavior:"smooth"});
     }
     telegramBack?.onClick(goBack);
+    const workloadLevel = level => ({no_data:"Недостаточно данных",low:"Низкая нагрузка",moderate:"Умеренная нагрузка",high:"Высокая нагрузка",overloaded:"Очень высокая нагрузка"}[level]||"Анализ готов");
+    const analysisList = (title,items) => items?.length?`<div class="analysis-block"><h4>${esc(title)}</h4><ul class="analysis-list">${items.map(item=>`<li>${esc(item)}</li>`).join("")}</ul></div>`:"";
+    function renderWorkloadPage() {
+      state.view="workload"; state.extension=null; state.calls=[];
+      el("heroTitle").textContent="Анализ занятости";
+      el("heroDate").textContent=periodLabel(state.report);
+      telegramBack?.show();
+      const analyses=state.report.workload_analyses||{};
+      const cards=Object.entries(state.report.employees||{}).map(([ext,manager])=>{
+        const item=analyses[ext];
+        if(!item) return `<article class="workload-card"><h3>${esc(manager.name)}</h3><div class="role-label">${esc(manager.role_title||"")}</div><div class="analysis-block"><h4>Цель роли</h4><p>${esc(manager.role_objective||"")}</p></div><div class="state" style="margin-top:12px">Анализ появится после завершения отчёта в 20:00</div></article>`;
+        if(item.status==="processing") return `<article class="workload-card"><h3>${esc(manager.name)}</h3><div class="role-label">${esc(item.role_title)}</div><div class="state" style="margin-top:12px"><div class="spinner"></div>Анализ формируется</div></article>`;
+        if(item.status==="error") return `<article class="workload-card"><h3>${esc(manager.name)}</h3><div class="role-label">${esc(item.role_title)}</div><div class="state" style="margin-top:12px">Не удалось сформировать анализ</div></article>`;
+        const m=item.metrics||{}, a=item.analysis||{};
+        return `<article class="workload-card"><h3>${esc(manager.name)}</h3><div class="role-label">${esc(item.role_title)}</div><span class="level">${esc(workloadLevel(a.workload_level))}</span>
+          <div class="workload-metrics"><div class="workload-metric"><b>${m.connected_calls||0}</b><span>состоявшихся</span></div><div class="workload-metric"><b>${duration(m.talk_seconds||0)}</b><span>в разговорах</span></div><div class="workload-metric"><b>${m.missed_calls||0}</b><span>недозвонов</span></div><div class="workload-metric"><b>${duration(m.average_talk_seconds||0)}</b><span>средний разговор</span></div></div>
+          <div class="analysis-block"><h4>Телефонная нагрузка</h4><p>${esc(a.workload_summary||"Нет вывода")}</p></div>
+          <div class="analysis-block"><h4>Соответствие роли</h4><p>${esc(a.role_alignment||"Нет вывода")}</p></div>
+          ${m.peak_hours?.length?`<div class="analysis-block"><h4>Пиковые часы</h4><p>${esc(m.peak_hours.join(", "))}</p></div>`:""}
+          ${analysisList("Сильные стороны",a.strengths)}${analysisList("Риски",a.risks)}${analysisList("Рекомендации",a.recommendations)}</article>`;
+      }).join("");
+      el("content").innerHTML=`<button class="back-nav" id="backFromWorkload">← К менеджерам</button><div class="section-head"><h2>Телефонная занятость</h2><span>после 20:00</span></div><div class="state" style="margin-bottom:12px">Анализ отражает только работу по телефону и не оценивает задачи вне звонков.</div><section class="workload-list">${cards}</section>`;
+      el("backFromWorkload").onclick=goBack;
+      window.scrollTo({top:0,behavior:"smooth"});
+    }
     function callSummary(call) {
       if(call.is_voicemail) return `<div class="summary"><div class="summary-label" style="color:var(--red)">Автоответчик</div><p>${esc(call.summary?.voicemail_reason||"Звонок завершился на автоответчике или голосовой почте.")}</p></div>`;
       if(call.is_missed) return '<div class="summary"><div class="summary-label" style="color:var(--red)">Недозвон</div><p>Разговор не состоялся, поэтому записи и расшифровки нет.</p></div>';

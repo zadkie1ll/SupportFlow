@@ -94,6 +94,22 @@ class CallStore:
                     completed_at TEXT,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS manager_daily_analyses (
+                    report_day TEXT NOT NULL,
+                    employee_id TEXT NOT NULL,
+                    role_key TEXT NOT NULL,
+                    role_title TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN
+                        ('processing','completed','error')),
+                    metrics_json TEXT NOT NULL DEFAULT '{}',
+                    analysis_json TEXT NOT NULL DEFAULT '{}',
+                    model TEXT NOT NULL DEFAULT '',
+                    last_error TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(report_day, employee_id)
+                );
                 """
             )
             report_columns = {
@@ -523,6 +539,89 @@ class CallStore:
                 (error[:1000], now, now, day.isoformat()),
             )
 
+    def begin_workload_analysis(
+        self, day: date, employee_id: str, role_key: str, role_title: str,
+        metrics: dict,
+    ) -> None:
+        now = self._now()
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO manager_daily_analyses(
+                    report_day,employee_id,role_key,role_title,status,metrics_json,
+                    created_at,updated_at
+                ) VALUES (?,?,?,?, 'processing',?,?,?)
+                ON CONFLICT(report_day,employee_id) DO UPDATE SET
+                    role_key=excluded.role_key, role_title=excluded.role_title,
+                    status='processing', metrics_json=excluded.metrics_json,
+                    analysis_json='{}', model='', last_error='', completed_at=NULL,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    day.isoformat(), str(employee_id), role_key, role_title,
+                    json.dumps(metrics, ensure_ascii=False), now, now,
+                ),
+            )
+
+    def save_workload_analysis(
+        self, day: date, employee_id: str, role_key: str, role_title: str,
+        metrics: dict, analysis: dict, model: str,
+    ) -> None:
+        now = self._now()
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO manager_daily_analyses(
+                    report_day,employee_id,role_key,role_title,status,metrics_json,
+                    analysis_json,model,created_at,completed_at,updated_at
+                ) VALUES (?,?,?,?, 'completed',?,?,?,?,?,?)
+                ON CONFLICT(report_day,employee_id) DO UPDATE SET
+                    role_key=excluded.role_key, role_title=excluded.role_title,
+                    status='completed', metrics_json=excluded.metrics_json,
+                    analysis_json=excluded.analysis_json, model=excluded.model,
+                    last_error='', completed_at=excluded.completed_at,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    day.isoformat(), str(employee_id), role_key, role_title,
+                    json.dumps(metrics, ensure_ascii=False),
+                    json.dumps(analysis, ensure_ascii=False), model, now, now, now,
+                ),
+            )
+
+    def fail_workload_analysis(
+        self, day: date, employee_id: str, error: str,
+    ) -> None:
+        now = self._now()
+        with self._connect() as db:
+            db.execute(
+                """
+                UPDATE manager_daily_analyses SET status='error',last_error=?,
+                    completed_at=?,updated_at=?
+                WHERE report_day=? AND employee_id=?
+                """,
+                (error[:1000], now, now, day.isoformat(), str(employee_id)),
+            )
+
+    def workload_analyses(self, day: date) -> dict[str, dict]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT * FROM manager_daily_analyses
+                WHERE report_day=? ORDER BY employee_id
+                """,
+                (day.isoformat(),),
+            ).fetchall()
+        result: dict[str, dict] = {}
+        for row in rows:
+            item = dict(row)
+            item["metrics"] = self._decode_json(item.pop("metrics_json") or "{}", {})
+            item["analysis"] = self._decode_json(
+                item.pop("analysis_json") or "{}", {}
+            )
+            result[str(item["employee_id"])] = item
+        return result
+
     def recent_reports(self, limit: int = 31) -> list[dict]:
         with self._connect() as db:
             rows = db.execute(
@@ -590,6 +689,11 @@ class CallStore:
         result["failed_calls"] = sum(
             call["analysis_status"] == "error" for call in calls
         )
+        workloads = self.workload_analyses(day)
+        result["workload_analyses"] = {
+            employee_id: workloads[employee_id]
+            for employee_id in employees if employee_id in workloads
+        }
         return result
 
     def calls_for_report(

@@ -17,7 +17,9 @@ from call_stats_bot.analysis import AnalysisResult, CallContentSummary, DailyAna
 from call_stats_bot.megafon import parse_history_event
 from call_stats_bot.main import _active_report_day
 from call_stats_bot.miniapp import verify_telegram_init_data
+from call_stats_bot.roles import load_roles
 from call_stats_bot.store import CallStore
+from call_stats_bot.workload import DailyWorkloadService, build_workload_metrics
 
 
 class FakeAnalyzer:
@@ -41,6 +43,20 @@ class FakeAnalyzer:
             transcription_model=self.transcription_model,
             summary_model=self.summary_model,
         )
+
+
+class FakeWorkloadAnalyzer:
+    model = "workload-test"
+
+    def analyze(self, *, employee_name, role, metrics, calls):
+        return {
+            "workload_level": "moderate",
+            "workload_summary": f"{metrics['connected_calls']} состоявшихся звонка.",
+            "role_alignment": f"Работа соответствует роли {role.title}.",
+            "strengths": ["Есть зафиксированный результат разговора."],
+            "risks": [],
+            "recommendations": ["Продолжать фиксировать следующие шаги."],
+        }
 
 
 class CallReportTests(unittest.TestCase):
@@ -242,6 +258,50 @@ class CallReportTests(unittest.TestCase):
         )
         self.assertFalse(legacy.is_voicemail)
         self.assertEqual(legacy.voicemail_reason, "")
+
+    def test_roles_and_daily_workload_analysis_are_persisted(self):
+        roles = load_roles()
+        self.assertEqual(roles.for_employee("715").title, "Бухгалтер")
+        self.assertEqual(roles.for_employee("712").title, "Юрист сопровождения")
+        with tempfile.TemporaryDirectory() as temporary:
+            store = CallStore(str(Path(temporary) / "calls.sqlite3"))
+            store.save_call(
+                call_id="connected", employee_id="715",
+                started_at=datetime(2026, 11, 2, 12, 0, tzinfo=UTC),
+                duration_seconds=300, status="Success", direction="out",
+                recording_url="https://records.test/connected.mp3",
+            )
+            store.save_call(
+                call_id="missed", employee_id="715",
+                started_at=datetime(2026, 11, 2, 13, 0, tzinfo=UTC),
+                duration_seconds=0, status="Busy", direction="out",
+            )
+            store.analysis_candidates(date(2026, 11, 2), "Europe/Moscow")
+            store.save_analysis(
+                "connected", transcript_text="Оплата поступит завтра", segments=[],
+                summary={
+                    "short_summary": "Клиент подтвердил оплату.",
+                    "client_request": "Уточнить платёж",
+                    "result": "Оплата подтверждена",
+                    "next_steps": ["Проверить поступление"],
+                },
+                transcription_model="test", summary_model="test",
+            )
+            calls = store.calls_for_day(date(2026, 11, 2), "Europe/Moscow")
+            metrics = build_workload_metrics(calls)
+            self.assertEqual(metrics["connected_calls"], 1)
+            self.assertEqual(metrics["missed_calls"], 1)
+            self.assertEqual(metrics["talk_seconds"], 300)
+            service = DailyWorkloadService(
+                store, FakeWorkloadAnalyzer(), roles,
+                timezone="Europe/Moscow", report_time="20:00",
+            )
+            result = asyncio.run(service.run(date(2026, 11, 2), {"715": "Оксана"}))
+            self.assertEqual(result, {"completed": 1, "failed": 0})
+            saved = store.workload_analyses(date(2026, 11, 2))["715"]
+            self.assertEqual(saved["status"], "completed")
+            self.assertEqual(saved["role_title"], "Бухгалтер")
+            self.assertEqual(saved["analysis"]["workload_level"], "moderate")
 
     def test_history_event_keeps_recording_and_call_metadata(self):
         event = parse_history_event({
