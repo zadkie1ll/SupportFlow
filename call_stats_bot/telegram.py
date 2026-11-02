@@ -56,6 +56,37 @@ def web_app_keyboard(url: str, label: str = "📞 Отчёты и звонки")
     return {"inline_keyboard": [[{"text": label, "web_app": {"url": url}}]]}
 
 
+async def set_chat_menu_button(
+    token: str, url: str, label: str = "Отчёты"
+) -> None:
+    """Place the Mini App button to the left of Telegram's message field."""
+    try:
+        async with httpx.AsyncClient(timeout=_telegram_timeout(15)) as client:
+            response = await client.post(
+                f"https://api.telegram.org/bot{token}/setChatMenuButton",
+                json={
+                    "menu_button": {
+                        "type": "web_app",
+                        "text": label,
+                        "web_app": {"url": url},
+                    }
+                },
+            )
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
+        raise TelegramApiError("Cannot configure Telegram menu button") from exc
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise TelegramApiError(
+            f"Telegram menu button returned HTTP {response.status_code}"
+        ) from exc
+    if not payload.get("ok"):
+        raise TelegramApiError(
+            f"Telegram menu button returned HTTP {response.status_code}: "
+            f"{payload.get('description', 'Telegram API error')}"
+        )
+
+
 async def edit_message(
     token: str,
     chat_id: int,
