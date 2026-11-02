@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
-from call_stats_bot.analysis import AnalysisResult, DailyAnalysisService
+from call_stats_bot.analysis import AnalysisResult, CallContentSummary, DailyAnalysisService
 from call_stats_bot.megafon import parse_history_event
 from call_stats_bot.main import _active_report_day
 from call_stats_bot.miniapp import verify_telegram_init_data
@@ -206,6 +206,42 @@ class CallReportTests(unittest.TestCase):
             self.assertEqual(list(report["employees"]), ["713"])
             self.assertEqual(report["total_calls"], 1)
             self.assertEqual(report["analyzable_calls"], 1)
+
+    def test_voicemail_is_a_missed_call_without_changing_old_summaries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = CallStore(str(Path(temporary) / "calls.sqlite3"))
+            store.save_call(
+                call_id="voicemail", employee_id="713",
+                started_at=datetime(2026, 11, 2, 12, 0, tzinfo=UTC),
+                duration_seconds=45, status="Success",
+                recording_url="https://records.test/voicemail.mp3",
+            )
+            store.analysis_candidates(date(2026, 11, 2), "Europe/Moscow")
+            store.save_analysis(
+                "voicemail", transcript_text="Оставьте сообщение после сигнала",
+                segments=[],
+                summary={
+                    "short_summary": "Сработала голосовая почта.",
+                    "is_voicemail": True,
+                    "voicemail_reason": "Прозвучала просьба оставить сообщение после сигнала.",
+                },
+                transcription_model="test", summary_model="test",
+            )
+            call = store.calls_for_day(date(2026, 11, 2), "Europe/Moscow")[0]
+            self.assertTrue(call["is_voicemail"])
+            self.assertTrue(call["is_missed"])
+            self.assertEqual(
+                store.daily_stats(
+                    date(2026, 11, 2), "Europe/Moscow", ["713"]
+                )["713"].missed_calls,
+                1,
+            )
+        legacy = CallContentSummary(
+            short_summary="Разговор состоялся", client_request="Вопрос",
+            result="Ответ получен",
+        )
+        self.assertFalse(legacy.is_voicemail)
+        self.assertEqual(legacy.voicemail_reason, "")
 
     def test_history_event_keeps_recording_and_call_metadata(self):
         event = parse_history_event({

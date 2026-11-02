@@ -161,6 +161,7 @@
     }
     telegramBack?.onClick(goBack);
     function callSummary(call) {
+      if(call.is_voicemail) return `<div class="summary"><div class="summary-label" style="color:var(--red)">Автоответчик</div><p>${esc(call.summary?.voicemail_reason||"Звонок завершился на автоответчике или голосовой почте.")}</p></div>`;
       if(call.is_missed) return '<div class="summary"><div class="summary-label" style="color:var(--red)">Недозвон</div><p>Разговор не состоялся, поэтому записи и расшифровки нет.</p></div>';
       if(call.analysis_status==="processing"||call.analysis_status==="pending") return '<div class="summary"><div class="summary-label">Выжимка</div><p>Формируется…</p></div>';
       if(call.analysis_status==="error") return '<div class="summary"><div class="summary-label">Выжимка</div><p>Не удалось обработать запись</p></div>';
@@ -182,7 +183,7 @@
         ${loading?'<div class="state"><div class="spinner"></div>Загружаем звонки</div>':error?`<div class="state">${esc(error.message||error)}</div>`:`
         <section class="calls">${state.calls.length?state.calls.map(call=>{ const dt=new Date(call.started_at); const incoming=["in","incoming"].includes(String(call.direction).toLowerCase()); return `
           <article class="call ${call.is_missed?'missed':''}" data-id="${esc(call.call_id)}"><div class="call-top"><span class="call-time">${esc(moscowShort(dt))}</span>
-          <span class="direction ${call.is_missed?'missed':''}">${call.is_missed?'● Недозвон':incoming?'↙ Входящий':'↗ Исходящий'}</span><span class="duration">${duration(call.duration_seconds)}</span></div>
+          <span class="direction ${call.is_missed?'missed':''}">${call.is_voicemail?'● Автоответчик':call.is_missed?'● Недозвон':incoming?'↙ Входящий':'↗ Исходящий'}</span><span class="duration">${duration(call.duration_seconds)}</span></div>
           <div class="phone">${esc(call.client_phone||"Номер не указан")}</div>${callSummary(call)}
           ${call.analysis_status==="completed"?'<button class="open-call">Полная расшифровка</button>':''}<div class="detail"></div></article>`;}).join(""):'<div class="state">У менеджера нет звонков за этот день</div>'}</section>`}`;
       el("backToManagers").onclick=goBack;

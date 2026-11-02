@@ -175,21 +175,30 @@ class CallStore:
         start, end = self._bounds(day, timezone, report_time)
         placeholders = ",".join("?" for _ in employee_ids)
         query = f"""
-            SELECT employee_id, COUNT(*) AS calls, SUM(duration_seconds) AS duration,
-                   SUM(CASE WHEN recording_url='' AND lower(trim(status)) IN
-                       ('missed','busy','notavailable') THEN 1 ELSE 0 END) AS missed
-            FROM calls
-            WHERE started_at >= ? AND started_at < ?
-              AND employee_id IN ({placeholders})
-            GROUP BY employee_id
+            SELECT c.employee_id, c.duration_seconds, c.status, c.recording_url,
+                   a.summary_json
+            FROM calls c LEFT JOIN call_analyses a ON a.call_id=c.call_id
+            WHERE c.started_at >= ? AND c.started_at < ?
+              AND c.employee_id IN ({placeholders})
         """
         with self._connect() as db:
             rows = db.execute(
                 query, [start, end, *employee_ids]
             ).fetchall()
+        totals = {
+            employee_id: {"calls": 0, "duration": 0, "missed": 0}
+            for employee_id in employee_ids
+        }
         for row in rows:
-            result[row["employee_id"]] = EmployeeStats(
-                int(row["calls"]), int(row["duration"] or 0), int(row["missed"] or 0)
+            item = dict(row)
+            item["summary"] = self._decode_json(item.pop("summary_json") or "{}", {})
+            total = totals[row["employee_id"]]
+            total["calls"] += 1
+            total["duration"] += int(row["duration_seconds"] or 0)
+            total["missed"] += int(self._is_missed_call(item))
+        for employee_id, total in totals.items():
+            result[employee_id] = EmployeeStats(
+                total["calls"], total["duration"], total["missed"]
             )
         return result
 
@@ -227,9 +236,13 @@ class CallStore:
 
     @staticmethod
     def _is_missed_call(item: dict) -> bool:
-        return not str(item.get("recording_url") or "").strip() and str(
-            item.get("status") or ""
-        ).strip().casefold() in {"missed", "busy", "notavailable"}
+        summary = item.get("summary")
+        is_voicemail = isinstance(summary, dict) and summary.get("is_voicemail") is True
+        return is_voicemail or (
+            not str(item.get("recording_url") or "").strip()
+            and str(item.get("status") or "").strip().casefold()
+            in {"missed", "busy", "notavailable"}
+        )
 
     def calls_for_day(
         self, day: date, timezone: str, employee_id: str = "",
@@ -276,6 +289,7 @@ class CallStore:
                 item.pop("transcript_text", None)
                 item.pop("segments", None)
             item["is_missed"] = self._is_missed_call(item)
+            item["is_voicemail"] = item["summary"].get("is_voicemail") is True
             result.append(item)
         # Keep conversations first and move non-connections to the bottom while
         # preserving newest-first order inside both groups.
@@ -306,6 +320,7 @@ class CallStore:
             item.pop("transcript_segments_json") or "[]", []
         )
         item["is_missed"] = self._is_missed_call(item)
+        item["is_voicemail"] = item["summary"].get("is_voicemail") is True
         return item
 
     def begin_daily_report(
