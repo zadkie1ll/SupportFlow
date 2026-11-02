@@ -83,6 +83,50 @@ class CallReportTests(unittest.TestCase):
             self.assertEqual(detail["segments"][1]["speaker"], "client")
             self.assertIn("Менеджер", detail["transcript_text"])
 
+    def test_report_day_runs_from_previous_cutoff_to_current_cutoff(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = CallStore(str(Path(temporary) / "calls.sqlite3"))
+            moments = {
+                "before": datetime(2026, 11, 1, 16, 59, 59, tzinfo=UTC),
+                "start": datetime(2026, 11, 1, 17, 0, 0, tzinfo=UTC),
+                "inside": datetime(2026, 11, 2, 16, 59, 59, tzinfo=UTC),
+                "end": datetime(2026, 11, 2, 17, 0, 0, tzinfo=UTC),
+            }
+            for call_id, started_at in moments.items():
+                store.save_call(
+                    call_id=call_id, employee_id="713", started_at=started_at,
+                    duration_seconds=10, status="Success",
+                    recording_url=f"https://records.test/{call_id}.mp3",
+                )
+            calls = store.calls_for_day(
+                date(2026, 11, 2), "Europe/Moscow", report_time="20:00"
+            )
+            self.assertEqual({call["call_id"] for call in calls}, {"start", "inside"})
+            stats = store.daily_stats(
+                date(2026, 11, 2), "Europe/Moscow", ["713"], "20:00"
+            )
+            self.assertEqual(stats["713"].calls, 2)
+
+    def test_next_report_catches_recording_delivered_after_older_report(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = CallStore(str(Path(temporary) / "calls.sqlite3"))
+            store.save_call(
+                call_id="late-call", employee_id="713",
+                started_at=datetime(2026, 10, 30, 17, 5, tzinfo=UTC),
+                duration_seconds=27, status="Success",
+                recording_url="https://records.test/late.mp3",
+            )
+            service = DailyAnalysisService(
+                store, FakeAnalyzer(), timezone="Europe/Moscow", concurrency=2,
+                report_time="20:00",
+            )
+            asyncio.run(service.run(date(2026, 11, 2), {"713": "Александр"}))
+            detail = store.call_detail("late-call", "Europe/Moscow")
+            self.assertEqual(detail["analysis_status"], "completed")
+            report = store.report_detail(date(2026, 11, 2), "Europe/Moscow")
+            self.assertEqual(report["period_start"], "2026-11-01T17:00:00+00:00")
+            self.assertEqual(report["period_end"], "2026-11-02T17:00:00+00:00")
+
     def test_history_event_keeps_recording_and_call_metadata(self):
         event = parse_history_event({
             "cmd": "history", "callid": "abc", "ext": "713", "user": "manager",

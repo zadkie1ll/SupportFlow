@@ -102,6 +102,14 @@ class CallStore:
                 db.execute(
                     "ALTER TABLE daily_reports ADD COLUMN last_error TEXT NOT NULL DEFAULT ''"
                 )
+            if "period_start" not in report_columns:
+                db.execute(
+                    "ALTER TABLE daily_reports ADD COLUMN period_start TEXT NOT NULL DEFAULT ''"
+                )
+            if "period_end" not in report_columns:
+                db.execute(
+                    "ALTER TABLE daily_reports ADD COLUMN period_end TEXT NOT NULL DEFAULT ''"
+                )
 
     def save_call(
         self,
@@ -156,17 +164,14 @@ class CallStore:
         return cursor.rowcount > 0
 
     def daily_stats(
-        self, day: date, timezone: str, employee_ids: list[str]
+        self, day: date, timezone: str, employee_ids: list[str],
+        report_time: str | None = None,
     ) -> dict[str, EmployeeStats]:
         result = {employee_id: EmployeeStats(0, 0) for employee_id in employee_ids}
         if not employee_ids:
             return result
 
-        zone = ZoneInfo(timezone)
-        start = datetime.combine(day, time.min, tzinfo=zone).astimezone(utc_timezone.utc)
-        end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=zone).astimezone(
-            utc_timezone.utc
-        )
+        start, end = self._bounds(day, timezone, report_time)
         placeholders = ",".join("?" for _ in employee_ids)
         query = f"""
             SELECT employee_id, COUNT(*) AS calls, SUM(duration_seconds) AS duration
@@ -177,7 +182,7 @@ class CallStore:
         """
         with self._connect() as db:
             rows = db.execute(
-                query, [start.isoformat(), end.isoformat(), *employee_ids]
+                query, [start, end, *employee_ids]
             ).fetchall()
         for row in rows:
             result[row["employee_id"]] = EmployeeStats(
@@ -190,12 +195,24 @@ class CallStore:
         return datetime.now(utc_timezone.utc).isoformat()
 
     @staticmethod
-    def _bounds(day: date, timezone: str) -> tuple[str, str]:
+    def _bounds(
+        day: date, timezone: str, report_time: str | None = None,
+    ) -> tuple[str, str]:
         zone = ZoneInfo(timezone)
-        start = datetime.combine(day, time.min, tzinfo=zone).astimezone(utc_timezone.utc)
-        end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=zone).astimezone(
-            utc_timezone.utc
-        )
+        if report_time:
+            hour, minute = (int(part) for part in report_time.split(":"))
+            cutoff = time(hour, minute)
+            end = datetime.combine(day, cutoff, tzinfo=zone).astimezone(utc_timezone.utc)
+            start = datetime.combine(
+                day - timedelta(days=1), cutoff, tzinfo=zone
+            ).astimezone(utc_timezone.utc)
+        else:
+            start = datetime.combine(day, time.min, tzinfo=zone).astimezone(
+                utc_timezone.utc
+            )
+            end = datetime.combine(
+                day + timedelta(days=1), time.min, tzinfo=zone
+            ).astimezone(utc_timezone.utc)
         return start.isoformat(), end.isoformat()
 
     @staticmethod
@@ -207,9 +224,17 @@ class CallStore:
 
     def calls_for_day(
         self, day: date, timezone: str, employee_id: str = "",
+        *, include_content: bool = False, report_time: str | None = None,
+    ) -> list[dict]:
+        start, end = self._bounds(day, timezone, report_time)
+        return self.calls_for_period(
+            start, end, timezone, employee_id, include_content=include_content
+        )
+
+    def calls_for_period(
+        self, start: str, end: str, timezone: str, employee_id: str = "",
         *, include_content: bool = False,
     ) -> list[dict]:
-        start, end = self._bounds(day, timezone)
         filters = ["c.started_at >= ?", "c.started_at < ?"]
         params: list[object] = [start, end]
         if employee_id:
@@ -270,9 +295,10 @@ class CallStore:
         return item
 
     def begin_daily_report(
-        self, day: date, timezone: str, employees: dict[str, str]
+        self, day: date, timezone: str, employees: dict[str, str],
+        report_time: str | None = None,
     ) -> None:
-        stats = self.daily_stats(day, timezone, list(employees))
+        stats = self.daily_stats(day, timezone, list(employees), report_time)
         stats_payload = {
             employee_id: {
                 "name": employees[employee_id],
@@ -281,9 +307,9 @@ class CallStore:
             }
             for employee_id, item in stats.items()
         }
-        calls = self.calls_for_day(day, timezone)
+        calls = self.calls_for_day(day, timezone, report_time=report_time)
         analyzable = sum(bool(item["recording_url"]) for item in calls)
-        start, end = self._bounds(day, timezone)
+        start, end = self._bounds(day, timezone, report_time)
         now = self._now()
         with self._connect() as db:
             db.execute(
@@ -299,28 +325,31 @@ class CallStore:
                 """
                 INSERT INTO daily_reports(
                     report_day, status, employee_snapshot_json, stats_snapshot_json,
-                    total_calls, analyzable_calls, created_at, started_at, updated_at
-                ) VALUES (?, 'processing', ?, ?, ?, ?, ?, ?, ?)
+                    total_calls, analyzable_calls, created_at, started_at, updated_at,
+                    period_start, period_end
+                ) VALUES (?, 'processing', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(report_day) DO UPDATE SET
                     status='processing', employee_snapshot_json=excluded.employee_snapshot_json,
                     stats_snapshot_json=excluded.stats_snapshot_json,
                     total_calls=excluded.total_calls,
                     analyzable_calls=excluded.analyzable_calls,
                     started_at=excluded.started_at, completed_at=NULL,
-                    last_error='',
+                    last_error='', period_start=excluded.period_start,
+                    period_end=excluded.period_end,
                     updated_at=excluded.updated_at
                 """,
                 (
                     day.isoformat(), json.dumps(employees, ensure_ascii=False),
                     json.dumps(stats_payload, ensure_ascii=False), len(calls), analyzable,
-                    now, now, now,
+                    now, now, now, start, end,
                 ),
             )
 
     def analysis_candidates(
-        self, day: date, timezone: str, *, retry_errors: bool = True
+        self, day: date, timezone: str, *, retry_errors: bool = True,
+        report_time: str | None = None,
     ) -> list[dict]:
-        start, end = self._bounds(day, timezone)
+        start, end = self._bounds(day, timezone, report_time)
         statuses = "('pending','error')" if retry_errors else "('pending')"
         now = self._now()
         with self._connect() as db:
@@ -332,24 +361,35 @@ class CallStore:
                 """,
                 (now, start, end),
             )
+            # A callback may arrive after the report boundary (for example, a call
+            # started at 19:59 and finished after 20:00). Pick up every older
+            # recording that has not been analyzed so it cannot fall between days.
+            db.execute(
+                """
+                INSERT OR IGNORE INTO call_analyses(call_id, status, updated_at)
+                SELECT call_id, 'pending', ? FROM calls
+                WHERE started_at < ? AND recording_url <> ''
+                """,
+                (now, end),
+            )
             db.execute(
                 """
                 UPDATE call_analyses SET status='pending', updated_at=?
                 WHERE status='skipped' AND call_id IN (
                     SELECT call_id FROM calls
-                    WHERE started_at >= ? AND started_at < ? AND recording_url <> ''
+                    WHERE started_at < ? AND recording_url <> ''
                 )
                 """,
-                (now, start, end),
+                (now, end),
             )
             rows = db.execute(
                 f"""
                 SELECT c.* FROM calls c JOIN call_analyses a ON a.call_id=c.call_id
-                WHERE c.started_at >= ? AND c.started_at < ?
-                  AND c.recording_url <> '' AND a.status IN {statuses} AND a.attempts < 3
+                WHERE c.started_at < ? AND c.recording_url <> ''
+                  AND a.status IN {statuses} AND a.attempts < 3
                 ORDER BY c.started_at, c.call_id
                 """,
-                (start, end),
+                (end,),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -397,9 +437,9 @@ class CallStore:
             )
 
     def set_daily_report_result(
-        self, day: date, timezone: str
+        self, day: date, timezone: str, report_time: str | None = None,
     ) -> dict[str, int | str]:
-        start, end = self._bounds(day, timezone)
+        start, end = self._bounds(day, timezone, report_time)
         with self._connect() as db:
             counts = {
                 row["status"]: int(row["amount"])
@@ -465,7 +505,11 @@ class CallStore:
         result = dict(row)
         employees = self._decode_json(result.pop("employee_snapshot_json") or "{}", {})
         stats = self._decode_json(result.pop("stats_snapshot_json") or "{}", {})
-        calls = self.calls_for_day(day, timezone)
+        start = str(result.get("period_start") or "")
+        end = str(result.get("period_end") or "")
+        if not start or not end:
+            start, end = self._bounds(day, timezone)
+        calls = self.calls_for_period(start, end, timezone)
         for extension, name in employees.items():
             employee_calls = [item for item in calls if item["employee_id"] == extension]
             item = stats.setdefault(extension, {"name": name, "calls": 0, "duration_seconds": 0})
@@ -478,3 +522,19 @@ class CallStore:
             item["recordings"] = sum(bool(call["recording_url"]) for call in employee_calls)
         result["employees"] = stats
         return result
+
+    def calls_for_report(
+        self, day: date, timezone: str, employee_id: str = "",
+    ) -> list[dict]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT period_start,period_end FROM daily_reports WHERE report_day=?",
+                (day.isoformat(),),
+            ).fetchone()
+        if row is None:
+            return []
+        start = str(row["period_start"] or "")
+        end = str(row["period_end"] or "")
+        if not start or not end:
+            start, end = self._bounds(day, timezone)
+        return self.calls_for_period(start, end, timezone, employee_id)

@@ -215,18 +215,23 @@ class CallAnalyzer:
 class DailyAnalysisService:
     def __init__(
         self, store: CallStore, analyzer: CallAnalyzer, *, timezone: str,
-        concurrency: int = 2,
+        concurrency: int = 2, report_time: str | None = None,
     ):
         self.store = store
         self.analyzer = analyzer
         self.timezone = timezone
         self.concurrency = max(1, min(concurrency, 5))
+        self.report_time = report_time
         self._lock = asyncio.Lock()
 
     async def run(self, day: date, employees: dict[str, str]) -> dict[str, int | str]:
         async with self._lock:
-            self.store.begin_daily_report(day, self.timezone, employees)
-            candidates = self.store.analysis_candidates(day, self.timezone)
+            self.store.begin_daily_report(
+                day, self.timezone, employees, self.report_time
+            )
+            candidates = self.store.analysis_candidates(
+                day, self.timezone, report_time=self.report_time
+            )
             semaphore = asyncio.Semaphore(self.concurrency)
 
             async def process(call: dict) -> None:
@@ -248,4 +253,6 @@ class DailyAnalysisService:
                         self.store.fail_analysis(call_id, message)
 
             await asyncio.gather(*(process(call) for call in candidates))
-            return self.store.set_daily_report_result(day, self.timezone)
+            return self.store.set_daily_report_result(
+                day, self.timezone, self.report_time
+            )

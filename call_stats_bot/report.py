@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from html import escape
 
 from call_stats_bot.store import CallStore
@@ -31,9 +31,15 @@ def build_daily_report(
     day: date,
     timezone: str,
     employees: dict[str, str],
+    report_time: str | None = None,
 ) -> str:
-    stats = store.daily_stats(day, timezone, list(employees))
-    lines = [f"☎️ <b>Звонки за {day.strftime('%d.%m.%Y')}</b>", ""]
+    stats = store.daily_stats(day, timezone, list(employees), report_time)
+    period = (
+        f"с {(day - timedelta(days=1)).strftime('%d.%m')} "
+        f"{report_time} до {day.strftime('%d.%m')} {report_time}"
+        if report_time else day.strftime('%d.%m.%Y')
+    )
+    lines = [f"☎️ <b>Звонки за период</b>", f"🕗 {period} МСК", ""]
     for employee_id, name in employees.items():
         item = stats[employee_id]
         lines.append(

@@ -53,8 +53,10 @@ async def _send_report(day: date) -> None:
     settings = get_settings()
     employees = await _employee_names()
     store = _store()
-    store.begin_daily_report(day, settings.timezone, employees)
-    text = build_daily_report(store, day, settings.timezone, employees)
+    store.begin_daily_report(day, settings.timezone, employees, settings.report_time)
+    text = build_daily_report(
+        store, day, settings.timezone, employees, settings.report_time
+    )
     markup = _miniapp_markup()
 
     async def send_to_chat(chat_id: int) -> None:
@@ -88,6 +90,7 @@ def _analysis_service() -> DailyAnalysisService | None:
         _daily_analysis_service = DailyAnalysisService(
             _store(), analyzer, timezone=settings.timezone,
             concurrency=settings.analysis_concurrency,
+            report_time=settings.report_time,
         )
     return _daily_analysis_service
 
@@ -98,7 +101,9 @@ async def _run_daily_analysis(day: date, *, notify: bool = True) -> dict[str, in
     service = _analysis_service()
     if service is None:
         store = _store()
-        store.begin_daily_report(day, settings.timezone, employees)
+        store.begin_daily_report(
+            day, settings.timezone, employees, settings.report_time
+        )
         reason = (
             "Daily analysis is temporarily disabled"
             if not settings.analysis_enabled
@@ -109,7 +114,8 @@ async def _run_daily_analysis(day: date, *, notify: bool = True) -> dict[str, in
     result = await service.run(day, employees)
     if notify:
         text = (
-            f"✅ <b>Анализ звонков за {day.strftime('%d.%m.%Y')} готов</b>\n"
+            f"✅ <b>Анализ звонков до {day.strftime('%d.%m.%Y')} "
+            f"{settings.report_time} МСК готов</b>\n"
             f"Расшифровано: {result['completed']} · Ошибок: {result['failed']} · "
             f"Без записи: {result['skipped']}"
         )
@@ -526,7 +532,10 @@ async def _handle_telegram_update(update: dict, service: SubstitutionService | N
         if sender_id not in settings.admin_ids:
             return
         today = datetime.now(ZoneInfo(settings.timezone)).date()
-        report = build_daily_report(_store(), today, settings.timezone, await _employee_names())
+        report = build_daily_report(
+            _store(), today, settings.timezone, await _employee_names(),
+            settings.report_time,
+        )
         if command == "/start":
             report += (
                 "\n\n<b>Замещения в Bitrix24</b>\n"

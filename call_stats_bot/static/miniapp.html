@@ -61,6 +61,7 @@
     .fact { padding:5px 8px; border-radius:9px; background:color-mix(in srgb,var(--accent) 9%,transparent); font-size:12px; }
     .open-call { width:100%; margin-top:11px; border:0; border-radius:12px; padding:10px; background:var(--accent); color:var(--accent-text); font-weight:700; }
     .transcript { margin-top:12px; border-top:1px solid var(--line); padding-top:12px; }
+    .transcript-time { color:var(--muted); font-size:13px; margin-bottom:10px; }
     .turn { padding:10px 12px; margin:7px 0; border-radius:13px; background:var(--bg); white-space:pre-wrap; }
     .turn.manager { border-left:3px solid var(--blue); }
     .turn.client { border-left:3px solid var(--green); }
@@ -93,6 +94,10 @@
     const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
     const duration = seconds => { seconds=Number(seconds||0); const h=Math.floor(seconds/3600), m=Math.floor(seconds%3600/60), s=seconds%60; return [h&&`${h} ч`,m&&`${m} мин`,(!h&&!m||s)&&`${s} сек`].filter(Boolean).join(" "); };
     const dayLabel = iso => new Intl.DateTimeFormat("ru-RU",{day:"numeric",month:"long",weekday:"short"}).format(new Date(`${iso}T12:00:00`));
+    const moscowDateTime = value => new Intl.DateTimeFormat("ru-RU",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",timeZone:"Europe/Moscow"}).format(new Date(value))+" МСК";
+    const moscowShort = value => new Intl.DateTimeFormat("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",timeZone:"Europe/Moscow"}).format(new Date(value));
+    const offsetTime = seconds => { seconds=Math.max(0,Math.floor(Number(seconds)||0)); return `${String(Math.floor(seconds/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`; };
+    const periodLabel = report => report.period_start&&report.period_end?`${moscowDateTime(report.period_start)} — ${moscowDateTime(report.period_end)}`:dayLabel(report.report_day);
     async function api(path) {
       if (!initData) throw new Error("Откройте приложение кнопкой внутри Telegram-бота");
       const response = await fetch(path,{headers:{Authorization:`tma ${initData}`}});
@@ -107,7 +112,7 @@
     function reportLamp(item) { if(item.analysis_errors) return "red"; if(item.recordings>item.analysis_completed) return "yellow"; return ""; }
     function renderReport() {
       const report=state.report, people=Object.entries(report.employees||{});
-      el("heroDate").textContent=dayLabel(report.report_day);
+      el("heroDate").textContent=periodLabel(report);
       el("reportStatus").textContent=report.status==="processing"?"● Расшифровки формируются":report.status==="attention"?"● Есть ошибки обработки":"● Отчёт готов";
       const totalDuration=people.reduce((sum,[,x])=>sum+Number(x.duration_seconds||0),0);
       el("content").innerHTML=`
@@ -150,7 +155,7 @@
       const area=el("callsArea"); if(!area) return;
       area.innerHTML=`<div class="section-head"><h2>Звонки · ${esc(manager.name)}</h2><span>${state.calls.length}</span></div>
         <section class="calls">${state.calls.length?state.calls.map(call=>{ const dt=new Date(call.started_at); const incoming=["in","incoming"].includes(String(call.direction).toLowerCase()); return `
-          <article class="call" data-id="${esc(call.call_id)}"><div class="call-top"><span class="call-time">${dt.toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"})}</span>
+          <article class="call" data-id="${esc(call.call_id)}"><div class="call-top"><span class="call-time">${esc(moscowShort(dt))}</span>
           <span class="direction">${incoming?'↙ Входящий':'↗ Исходящий'}</span><span class="duration">${duration(call.duration_seconds)}</span></div>
           <div class="phone">${esc(call.client_phone||"Номер не указан")}</div>${callSummary(call)}
           ${call.analysis_status==="completed"?'<button class="open-call">Полная расшифровка</button>':''}<div class="detail"></div></article>`;}).join(""):'<div class="state">У менеджера нет звонков за этот день</div>'}</section>`;
@@ -162,7 +167,7 @@
       if(detail.dataset.open){ detail.innerHTML=""; delete detail.dataset.open; button.textContent="Полная расшифровка"; return; }
       button.disabled=true; button.textContent="Загрузка…";
       try { const call=await api(`/api/support/calls/${encodeURIComponent(card.dataset.id)}`); const turns=call.segments||[];
-        detail.innerHTML=`<div class="transcript">${turns.length?turns.map(turn=>`<div class="turn ${esc(turn.speaker)}"><b>${turn.speaker==='manager'?'Менеджер':turn.speaker==='client'?'Клиент':'Спикер'}</b>${esc(turn.text||"")}</div>`).join(""):`<div class="turn"><b>Расшифровка</b>${esc(call.transcript_text||"Нет текста")}</div>`}</div>`;
+        detail.innerHTML=`<div class="transcript"><div class="transcript-time">Начало звонка: <b>${esc(moscowDateTime(call.started_at))}</b> · длительность ${esc(duration(call.duration_seconds))}</div>${turns.length?turns.map(turn=>`<div class="turn ${esc(turn.speaker)}"><b>${turn.speaker==='manager'?'Менеджер':turn.speaker==='client'?'Клиент':'Спикер'} · ${esc(offsetTime(turn.start))}</b>${esc(turn.text||"")}</div>`).join(""):`<div class="turn"><b>Расшифровка</b>${esc(call.transcript_text||"Нет текста")}</div>`}</div>`;
         detail.dataset.open="1"; button.textContent="Свернуть расшифровку";
       } catch(error){ detail.innerHTML=`<div class="state">${esc(error.message)}</div>`; button.textContent="Повторить"; } finally { button.disabled=false; }
     }

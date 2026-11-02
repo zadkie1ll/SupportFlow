@@ -100,7 +100,7 @@ async def employee_calls(
     settings = get_settings()
     if extension not in settings.employee_map:
         raise HTTPException(status_code=404, detail="Employee not found")
-    calls = _store().calls_for_day(report_day, settings.timezone, extension)
+    calls = _store().calls_for_report(report_day, settings.timezone, extension)
     return {"day": report_day.isoformat(), "extension": extension, "items": calls}
 
 
