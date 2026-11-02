@@ -165,6 +165,33 @@ async def _report_loop() -> None:
             )
 
 
+def _active_report_day(now: datetime, report_time: str) -> date:
+    hour, minute = (int(part) for part in report_time.split(":"))
+    cutoff = time(hour, minute)
+    return now.date() if now.time() < cutoff else now.date() + timedelta(days=1)
+
+
+async def _analysis_loop() -> None:
+    settings = get_settings()
+    interval = max(15, settings.analysis_poll_seconds)
+    while True:
+        try:
+            service = _analysis_service()
+            if service is not None:
+                now = datetime.now(ZoneInfo(settings.timezone))
+                result = await service.catch_up(
+                    _active_report_day(now, settings.report_time)
+                )
+                if result["selected"]:
+                    logger.info(
+                        "Live call analysis processed %s recording(s)",
+                        result["selected"],
+                    )
+        except Exception:
+            logger.exception("Live call analysis reconciliation failed")
+        await asyncio.sleep(interval)
+
+
 def _user_name(user: dict) -> str:
     name = " ".join(str(user.get(key, "")).strip() for key in ("NAME", "LAST_NAME")).strip()
     return name or str(user.get("EMAIL") or user.get("ID") or "Сотрудник")
@@ -733,7 +760,10 @@ async def _substitution_loop(service: SubstitutionService) -> None:
 async def lifespan(_: FastAPI):
     _store()
     service = _substitution_service()
-    tasks = [asyncio.create_task(_report_loop())]
+    tasks = [
+        asyncio.create_task(_report_loop()),
+        asyncio.create_task(_analysis_loop()),
+    ]
     if service is not None:
         tasks.append(asyncio.create_task(_substitution_loop(service)))
         tasks.append(asyncio.create_task(_roster(service).polling_loop()))

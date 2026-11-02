@@ -11,9 +11,11 @@ import unittest
 from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 from call_stats_bot.analysis import AnalysisResult, DailyAnalysisService
 from call_stats_bot.megafon import parse_history_event
+from call_stats_bot.main import _active_report_day
 from call_stats_bot.miniapp import verify_telegram_init_data
 from call_stats_bot.store import CallStore
 
@@ -126,6 +128,38 @@ class CallReportTests(unittest.TestCase):
             report = store.report_detail(date(2026, 11, 2), "Europe/Moscow")
             self.assertEqual(report["period_start"], "2026-11-01T17:00:00+00:00")
             self.assertEqual(report["period_end"], "2026-11-02T17:00:00+00:00")
+
+    def test_live_catch_up_processes_new_recording_without_daily_report(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = CallStore(str(Path(temporary) / "calls.sqlite3"))
+            store.save_call(
+                call_id="live-call", employee_id="713",
+                started_at=datetime(2026, 11, 2, 12, 0, tzinfo=UTC),
+                duration_seconds=300, status="Success",
+                recording_url="https://records.test/live.mp3",
+            )
+            service = DailyAnalysisService(
+                store, FakeAnalyzer(), timezone="Europe/Moscow",
+                report_time="20:00",
+            )
+            result = asyncio.run(service.catch_up(date(2026, 11, 2)))
+            self.assertEqual(result["selected"], 1)
+            self.assertEqual(
+                store.call_detail("live-call", "Europe/Moscow")["analysis_status"],
+                "completed",
+            )
+            self.assertIsNone(store.report_detail(date(2026, 11, 2), "Europe/Moscow"))
+
+    def test_active_report_day_switches_exactly_at_cutoff(self):
+        zone = ZoneInfo("Europe/Moscow")
+        self.assertEqual(
+            _active_report_day(datetime(2026, 11, 2, 19, 59, tzinfo=zone), "20:00"),
+            date(2026, 11, 2),
+        )
+        self.assertEqual(
+            _active_report_day(datetime(2026, 11, 2, 20, 0, tzinfo=zone), "20:00"),
+            date(2026, 11, 3),
+        )
 
     def test_history_event_keeps_recording_and_call_metadata(self):
         event = parse_history_event({

@@ -224,6 +224,38 @@ class DailyAnalysisService:
         self.report_time = report_time
         self._lock = asyncio.Lock()
 
+    async def _process(self, candidates: list[dict]) -> dict[str, int]:
+        semaphore = asyncio.Semaphore(self.concurrency)
+
+        async def process(call: dict) -> None:
+            async with semaphore:
+                call_id = str(call["call_id"])
+                self.store.mark_analysis_started(call_id)
+                try:
+                    result = await asyncio.to_thread(self.analyzer.analyze, call)
+                    self.store.save_analysis(
+                        call_id,
+                        transcript_text=result.transcript_text,
+                        segments=result.segments,
+                        summary=result.summary,
+                        transcription_model=result.transcription_model,
+                        summary_model=result.summary_model,
+                    )
+                except Exception as exc:
+                    message = f"{type(exc).__name__}: {exc}"
+                    self.store.fail_analysis(call_id, message)
+
+        await asyncio.gather(*(process(call) for call in candidates))
+        return {"selected": len(candidates)}
+
+    async def catch_up(self, day: date) -> dict[str, int]:
+        """Process every available recording before this report period ends."""
+        async with self._lock:
+            candidates = self.store.analysis_candidates(
+                day, self.timezone, report_time=self.report_time
+            )
+            return await self._process(candidates)
+
     async def run(self, day: date, employees: dict[str, str]) -> dict[str, int | str]:
         async with self._lock:
             self.store.begin_daily_report(
@@ -232,27 +264,7 @@ class DailyAnalysisService:
             candidates = self.store.analysis_candidates(
                 day, self.timezone, report_time=self.report_time
             )
-            semaphore = asyncio.Semaphore(self.concurrency)
-
-            async def process(call: dict) -> None:
-                async with semaphore:
-                    call_id = str(call["call_id"])
-                    self.store.mark_analysis_started(call_id)
-                    try:
-                        result = await asyncio.to_thread(self.analyzer.analyze, call)
-                        self.store.save_analysis(
-                            call_id,
-                            transcript_text=result.transcript_text,
-                            segments=result.segments,
-                            summary=result.summary,
-                            transcription_model=result.transcription_model,
-                            summary_model=result.summary_model,
-                        )
-                    except Exception as exc:
-                        message = f"{type(exc).__name__}: {exc}"
-                        self.store.fail_analysis(call_id, message)
-
-            await asyncio.gather(*(process(call) for call in candidates))
+            await self._process(candidates)
             return self.store.set_daily_report_result(
                 day, self.timezone, self.report_time
             )
