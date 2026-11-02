@@ -322,7 +322,10 @@ class CallStore:
             }
             for employee_id, item in stats.items()
         }
-        calls = self.calls_for_day(day, timezone, report_time=report_time)
+        calls = [
+            call for call in self.calls_for_day(day, timezone, report_time=report_time)
+            if call["employee_id"] in employees
+        ]
         analyzable = sum(bool(item["recording_url"]) for item in calls)
         start, end = self._bounds(day, timezone, report_time)
         now = self._now()
@@ -456,16 +459,28 @@ class CallStore:
     ) -> dict[str, int | str]:
         start, end = self._bounds(day, timezone, report_time)
         with self._connect() as db:
+            report = db.execute(
+                "SELECT employee_snapshot_json FROM daily_reports WHERE report_day=?",
+                (day.isoformat(),),
+            ).fetchone()
+            employees = self._decode_json(
+                report["employee_snapshot_json"] if report else "{}", {}
+            )
+            employee_ids = list(employees) if isinstance(employees, dict) else []
+            placeholders = ",".join("?" for _ in employee_ids)
+            employee_filter = (
+                f" AND c.employee_id IN ({placeholders})" if employee_ids else " AND 0"
+            )
             counts = {
                 row["status"]: int(row["amount"])
                 for row in db.execute(
-                    """
+                    f"""
                     SELECT a.status, COUNT(*) AS amount
                     FROM call_analyses a JOIN calls c ON c.call_id=a.call_id
-                    WHERE c.started_at >= ? AND c.started_at < ?
+                    WHERE c.started_at >= ? AND c.started_at < ? {employee_filter}
                     GROUP BY a.status
                     """,
-                    (start, end),
+                    (start, end, *employee_ids),
                 ).fetchall()
             }
             completed = counts.get("completed", 0)
@@ -510,7 +525,9 @@ class CallStore:
             result.append(item)
         return result
 
-    def report_detail(self, day: date, timezone: str) -> dict | None:
+    def report_detail(
+        self, day: date, timezone: str, employee_ids: set[str] | None = None,
+    ) -> dict | None:
         with self._connect() as db:
             row = db.execute(
                 "SELECT * FROM daily_reports WHERE report_day=?", (day.isoformat(),)
@@ -520,11 +537,23 @@ class CallStore:
         result = dict(row)
         employees = self._decode_json(result.pop("employee_snapshot_json") or "{}", {})
         stats = self._decode_json(result.pop("stats_snapshot_json") or "{}", {})
+        if employee_ids is not None:
+            employees = {
+                extension: name for extension, name in employees.items()
+                if extension in employee_ids
+            }
+            stats = {
+                extension: item for extension, item in stats.items()
+                if extension in employee_ids
+            }
         start = str(result.get("period_start") or "")
         end = str(result.get("period_end") or "")
         if not start or not end:
             start, end = self._bounds(day, timezone)
-        calls = self.calls_for_period(start, end, timezone)
+        calls = [
+            call for call in self.calls_for_period(start, end, timezone)
+            if call["employee_id"] in employees
+        ]
         for extension, name in employees.items():
             employee_calls = [item for item in calls if item["employee_id"] == extension]
             item = stats.setdefault(extension, {"name": name, "calls": 0, "duration_seconds": 0})
@@ -538,6 +567,14 @@ class CallStore:
             item["recordings"] = sum(bool(call["recording_url"]) for call in employee_calls)
         result["employees"] = stats
         result["missed_calls"] = sum(call["is_missed"] for call in calls)
+        result["total_calls"] = len(calls)
+        result["analyzable_calls"] = sum(bool(call["recording_url"]) for call in calls)
+        result["completed_calls"] = sum(
+            call["analysis_status"] == "completed" for call in calls
+        )
+        result["failed_calls"] = sum(
+            call["analysis_status"] == "error" for call in calls
+        )
         return result
 
     def calls_for_report(

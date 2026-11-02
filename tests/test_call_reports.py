@@ -186,6 +186,27 @@ class CallReportTests(unittest.TestCase):
             )
             self.assertEqual(stats["713"].missed_calls, 2)
 
+    def test_report_detail_filters_managers_and_totals(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = CallStore(str(Path(temporary) / "calls.sqlite3"))
+            for extension in ("713", "701"):
+                store.save_call(
+                    call_id=f"call-{extension}", employee_id=extension,
+                    started_at=datetime(2026, 11, 2, 12, 0, tzinfo=UTC),
+                    duration_seconds=60, status="Success",
+                    recording_url=f"https://records.test/{extension}.mp3",
+                )
+            store.begin_daily_report(
+                date(2026, 11, 2), "Europe/Moscow",
+                {"713": "Александр", "701": "Лиза"},
+            )
+            report = store.report_detail(
+                date(2026, 11, 2), "Europe/Moscow", {"713"}
+            )
+            self.assertEqual(list(report["employees"]), ["713"])
+            self.assertEqual(report["total_calls"], 1)
+            self.assertEqual(report["analyzable_calls"], 1)
+
     def test_history_event_keeps_recording_and_call_metadata(self):
         event = parse_history_event({
             "cmd": "history", "callid": "abc", "ext": "713", "user": "manager",

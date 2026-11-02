@@ -34,6 +34,10 @@
     .section-head { display:flex; justify-content:space-between; align-items:end; margin:20px 3px 10px; }
     .section-head h2 { margin:0; font-size:19px; }
     .section-head span { color:var(--muted); font-size:13px; }
+    .back-nav { width:100%; border:0; border-radius:15px; padding:12px 14px; margin:15px 0 4px; text-align:left; background:var(--surface); color:var(--accent); font-weight:750; }
+    .manager-page-head { margin:14px 0 12px; padding:18px; border-radius:var(--radius); background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
+    .manager-page-head h2 { margin:0; font-size:22px; }
+    .manager-page-head p { margin:5px 0 0; color:var(--muted); }
     .metrics { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; }
     .metric { padding:15px 12px; border-radius:18px; background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
     .metric strong { display:block; font-size:21px; }
@@ -81,7 +85,7 @@
   <main class="shell">
     <section class="hero">
       <div class="eyebrow">Отдел сопровождения</div>
-      <h1>Разговоры за день</h1>
+      <h1 id="heroTitle">Разговоры за день</h1>
       <p id="heroDate">Загрузка отчётов…</p>
       <div class="status-pill" id="reportStatus">● Подключаем данные</div>
     </section>
@@ -101,6 +105,7 @@
     const moscowShort = value => new Intl.DateTimeFormat("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",timeZone:"Europe/Moscow"}).format(new Date(value));
     const offsetTime = seconds => { seconds=Math.max(0,Math.floor(Number(seconds)||0)); return `${String(Math.floor(seconds/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`; };
     const periodLabel = report => report.period_start&&report.period_end?`${moscowDateTime(report.period_start)} — ${moscowDateTime(report.period_end)}`:dayLabel(report.report_day);
+    const telegramBack = tg?.BackButton;
     async function api(path) {
       if (!initData) throw new Error("Откройте приложение кнопкой внутри Telegram-бота");
       const response = await fetch(path,{headers:{Authorization:`tma ${initData}`}});
@@ -113,9 +118,14 @@
       el("dates").querySelectorAll("button").forEach(button=>button.onclick=()=>selectDay(button.dataset.day));
     }
     function reportLamp(item) { if(item.analysis_errors) return "red"; if(item.recordings>item.analysis_completed) return "yellow"; return ""; }
+    function showOverviewHeader() {
+      el("heroTitle").textContent="Разговоры за день";
+      el("heroDate").textContent=periodLabel(state.report);
+      telegramBack?.hide();
+    }
     function renderReport() {
       const report=state.report, people=Object.entries(report.employees||{});
-      el("heroDate").textContent=periodLabel(report);
+      showOverviewHeader();
       el("reportStatus").textContent=report.status==="processing"?"● Расшифровки формируются":report.status==="attention"?"● Есть ошибки обработки":"● Отчёт готов";
       const totalDuration=people.reduce((sum,[,x])=>sum+Number(x.duration_seconds||0),0);
       el("content").innerHTML=`
@@ -128,13 +138,11 @@
         </section>
         <div class="section-head"><h2>Менеджеры</h2><span>нажмите для звонков</span></div>
         <section class="managers">${people.map(([ext,item])=>`
-          <button class="manager ${state.extension===ext?'active':''}" data-ext="${esc(ext)}">
+          <button class="manager" data-ext="${esc(ext)}">
             <span class="lamp ${reportLamp(item)}"></span><span><div class="manager-name">${esc(item.name)}</div>
             <div class="manager-meta">${item.calls} звонков · ${duration(item.duration_seconds)} · ${item.analysis_completed}/${item.recordings} расшифровок · <span style="color:var(--red)">${item.missed_calls||0} недозвонов</span></div></span><span class="chevron">›</span>
-          </button>`).join("")}</section>
-        <div id="callsArea"></div>`;
+          </button>`).join("")}</section>`;
       document.querySelectorAll(".manager").forEach(button=>button.onclick=()=>loadCalls(button.dataset.ext));
-      if(state.extension) renderCalls();
     }
     async function selectDay(day) {
       state.day=day; state.extension=null; state.calls=[]; renderDates();
@@ -143,10 +151,15 @@
     }
     async function loadCalls(extension) {
       state.extension=extension; state.calls=[]; renderReport();
-      el("callsArea").innerHTML='<div class="section-head"><h2>Звонки</h2></div><div class="state"><div class="spinner"></div>Загружаем звонки</div>';
-      try { const data=await api(`/api/support/reports/${state.day}/employees/${encodeURIComponent(extension)}/calls`); state.calls=data.items; renderReport(); renderCalls(); }
-      catch(error){ el("callsArea").innerHTML=`<div class="state">${esc(error.message)}</div>`; }
+      renderManagerPage(true);
+      try { const data=await api(`/api/support/reports/${state.day}/employees/${encodeURIComponent(extension)}/calls`); state.calls=data.items; renderManagerPage(); }
+      catch(error){ renderManagerPage(false,error); }
     }
+    function goBack() {
+      state.extension=null; state.calls=[]; renderReport(); renderDates();
+      window.scrollTo({top:0,behavior:"smooth"});
+    }
+    telegramBack?.onClick(goBack);
     function callSummary(call) {
       if(call.is_missed) return '<div class="summary"><div class="summary-label" style="color:var(--red)">Недозвон</div><p>Разговор не состоялся, поэтому записи и расшифровки нет.</p></div>';
       if(call.analysis_status==="processing"||call.analysis_status==="pending") return '<div class="summary"><div class="summary-label">Выжимка</div><p>Формируется…</p></div>';
@@ -155,17 +168,26 @@
       const facts=[...(call.summary?.important_facts||[]),...(call.summary?.next_steps||[])].slice(0,4);
       return `<div class="summary"><div class="summary-label">Кратко</div><p>${esc(call.summary_text)}</p>${facts.length?`<div class="facts">${facts.map(x=>`<span class="fact">${esc(x)}</span>`).join("")}</div>`:""}</div>`;
     }
-    function renderCalls() {
+    function renderManagerPage(loading=false,error=null) {
       const manager=state.report.employees[state.extension];
-      const area=el("callsArea"); if(!area) return;
-      area.innerHTML=`<div class="section-head"><h2>Звонки · ${esc(manager.name)}</h2><span>${state.calls.length}</span></div>
+      if(!manager){ goBack(); return; }
+      el("heroTitle").textContent=manager.name;
+      el("heroDate").textContent=periodLabel(state.report);
+      telegramBack?.show();
+      el("content").innerHTML=`<button class="back-nav" id="backToManagers">← Все менеджеры</button>
+        <section class="manager-page-head"><h2>${esc(manager.name)}</h2>
+          <p>${manager.calls} звонков · ${duration(manager.duration_seconds)} · ${manager.analysis_completed}/${manager.recordings} расшифровок · <span style="color:var(--red)">${manager.missed_calls||0} недозвонов</span></p>
+        </section>
+        <div class="section-head"><h2>Звонки менеджера</h2><span>${loading?'':state.calls.length}</span></div>
+        ${loading?'<div class="state"><div class="spinner"></div>Загружаем звонки</div>':error?`<div class="state">${esc(error.message||error)}</div>`:`
         <section class="calls">${state.calls.length?state.calls.map(call=>{ const dt=new Date(call.started_at); const incoming=["in","incoming"].includes(String(call.direction).toLowerCase()); return `
           <article class="call ${call.is_missed?'missed':''}" data-id="${esc(call.call_id)}"><div class="call-top"><span class="call-time">${esc(moscowShort(dt))}</span>
           <span class="direction ${call.is_missed?'missed':''}">${call.is_missed?'● Недозвон':incoming?'↙ Входящий':'↗ Исходящий'}</span><span class="duration">${duration(call.duration_seconds)}</span></div>
           <div class="phone">${esc(call.client_phone||"Номер не указан")}</div>${callSummary(call)}
-          ${call.analysis_status==="completed"?'<button class="open-call">Полная расшифровка</button>':''}<div class="detail"></div></article>`;}).join(""):'<div class="state">У менеджера нет звонков за этот день</div>'}</section>`;
-      area.querySelectorAll(".open-call").forEach(button=>button.onclick=()=>openCall(button.closest(".call")));
-      area.scrollIntoView({behavior:"smooth",block:"start"});
+          ${call.analysis_status==="completed"?'<button class="open-call">Полная расшифровка</button>':''}<div class="detail"></div></article>`;}).join(""):'<div class="state">У менеджера нет звонков за этот день</div>'}</section>`}`;
+      el("backToManagers").onclick=goBack;
+      el("content").querySelectorAll(".open-call").forEach(button=>button.onclick=()=>openCall(button.closest(".call")));
+      window.scrollTo({top:0,behavior:"smooth"});
     }
     async function openCall(card) {
       const detail=card.querySelector(".detail"), button=card.querySelector(".open-call");

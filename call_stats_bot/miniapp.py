@@ -87,7 +87,9 @@ async def reports(
 @router.get("/api/support/reports/{report_day}")
 async def report_detail(report_day: date, _: dict = Depends(require_admin)) -> dict:
     settings = get_settings()
-    result = _store().report_detail(report_day, settings.timezone)
+    result = _store().report_detail(
+        report_day, settings.timezone, set(settings.report_employee_ids)
+    )
     if result is None:
         raise HTTPException(status_code=404, detail="Report not found")
     return result
@@ -98,7 +100,7 @@ async def employee_calls(
     report_day: date, extension: str, _: dict = Depends(require_admin)
 ) -> dict:
     settings = get_settings()
-    if extension not in settings.employee_map:
+    if extension not in settings.report_employee_ids:
         raise HTTPException(status_code=404, detail="Employee not found")
     calls = _store().calls_for_report(report_day, settings.timezone, extension)
     return {"day": report_day.isoformat(), "extension": extension, "items": calls}

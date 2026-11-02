@@ -51,7 +51,7 @@ def _substitution_service() -> SubstitutionService | None:
 
 async def _send_report(day: date) -> None:
     settings = get_settings()
-    employees = await _employee_names()
+    employees = await _report_employee_names()
     store = _store()
     store.begin_daily_report(day, settings.timezone, employees, settings.report_time)
     text = build_daily_report(
@@ -97,7 +97,7 @@ def _analysis_service() -> DailyAnalysisService | None:
 
 async def _run_daily_analysis(day: date, *, notify: bool = True) -> dict[str, int | str]:
     settings = get_settings()
-    employees = await _employee_names()
+    employees = await _report_employee_names()
     service = _analysis_service()
     if service is None:
         store = _store()
@@ -143,6 +143,15 @@ async def _employee_names() -> dict[str, str]:
     except Exception:
         logger.exception("Cannot refresh employee names from MegaFon; using configured names")
     return employees
+
+
+async def _report_employee_names() -> dict[str, str]:
+    settings = get_settings()
+    employees = await _employee_names()
+    return {
+        extension: employees[extension]
+        for extension in settings.report_employee_ids
+    }
 
 
 async def _report_loop() -> None:
@@ -560,7 +569,7 @@ async def _handle_telegram_update(update: dict, service: SubstitutionService | N
             return
         today = datetime.now(ZoneInfo(settings.timezone)).date()
         report = build_daily_report(
-            _store(), today, settings.timezone, await _employee_names(),
+            _store(), today, settings.timezone, await _report_employee_names(),
             settings.report_time,
         )
         if command == "/start":

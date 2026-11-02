@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     telegram_admin_ids: str = ""
     telegram_webhook_secret: str
     employees: str
+    report_employees: str = ""
     megafon_api_url: str = ""
     megafon_api_key: str = ""
     megafon_api_auth_header: str = "X-API-KEY"
@@ -65,6 +66,16 @@ class Settings(BaseSettings):
         if not isinstance(parsed, dict):
             raise ValueError("CALLBOT_EMPLOYEES must be a JSON object")
         return {str(key): str(name) for key, name in parsed.items()}
+
+    @property
+    def report_employee_ids(self) -> list[str]:
+        selected = [
+            item.strip() for item in self.report_employees.split(",") if item.strip()
+        ] or list(self.employee_map)
+        unknown = [item for item in selected if item not in self.employee_map]
+        if unknown:
+            raise ValueError(f"Unknown report employees: {unknown}")
+        return selected
 
     @property
     def telephony_bitrix_map(self) -> dict[str, int]:
