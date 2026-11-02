@@ -44,6 +44,7 @@ def build_daily_report(
         item = stats[employee_id]
         lines.append(
             f"<b>{escape(name)}</b>: {format_call_count(item.calls)} · "
-            f"{format_duration(item.duration_seconds)}"
+            f"{format_duration(item.duration_seconds)} · "
+            f"недозвонов: {item.missed_calls}"
         )
     return "\n".join(lines)

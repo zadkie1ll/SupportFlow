@@ -161,6 +161,31 @@ class CallReportTests(unittest.TestCase):
             date(2026, 11, 3),
         )
 
+    def test_missed_calls_are_counted_marked_and_sorted_last(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = CallStore(str(Path(temporary) / "calls.sqlite3"))
+            for call_id, minute, status, recording in (
+                ("missed-newest", 30, "Busy", ""),
+                ("success", 20, "Success", "https://records.test/success.mp3"),
+                ("missed-oldest", 10, "NotAvailable", ""),
+                ("legacy-success", 5, "Success", ""),
+            ):
+                store.save_call(
+                    call_id=call_id, employee_id="713",
+                    started_at=datetime(2026, 11, 2, 12, minute, tzinfo=UTC),
+                    duration_seconds=10, status=status, recording_url=recording,
+                )
+            calls = store.calls_for_day(date(2026, 11, 2), "Europe/Moscow")
+            self.assertEqual(
+                [call["call_id"] for call in calls],
+                ["success", "legacy-success", "missed-newest", "missed-oldest"],
+            )
+            self.assertEqual([call["is_missed"] for call in calls], [False, False, True, True])
+            stats = store.daily_stats(
+                date(2026, 11, 2), "Europe/Moscow", ["713"]
+            )
+            self.assertEqual(stats["713"].missed_calls, 2)
+
     def test_history_event_keeps_recording_and_call_metadata(self):
         event = parse_history_event({
             "cmd": "history", "callid": "abc", "ext": "713", "user": "manager",

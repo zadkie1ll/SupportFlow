@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 class EmployeeStats:
     calls: int
     duration_seconds: int
+    missed_calls: int = 0
 
 
 class CallStore:
@@ -167,14 +168,16 @@ class CallStore:
         self, day: date, timezone: str, employee_ids: list[str],
         report_time: str | None = None,
     ) -> dict[str, EmployeeStats]:
-        result = {employee_id: EmployeeStats(0, 0) for employee_id in employee_ids}
+        result = {employee_id: EmployeeStats(0, 0, 0) for employee_id in employee_ids}
         if not employee_ids:
             return result
 
         start, end = self._bounds(day, timezone, report_time)
         placeholders = ",".join("?" for _ in employee_ids)
         query = f"""
-            SELECT employee_id, COUNT(*) AS calls, SUM(duration_seconds) AS duration
+            SELECT employee_id, COUNT(*) AS calls, SUM(duration_seconds) AS duration,
+                   SUM(CASE WHEN recording_url='' AND lower(trim(status)) IN
+                       ('missed','busy','notavailable') THEN 1 ELSE 0 END) AS missed
             FROM calls
             WHERE started_at >= ? AND started_at < ?
               AND employee_id IN ({placeholders})
@@ -186,7 +189,7 @@ class CallStore:
             ).fetchall()
         for row in rows:
             result[row["employee_id"]] = EmployeeStats(
-                int(row["calls"]), int(row["duration"] or 0)
+                int(row["calls"]), int(row["duration"] or 0), int(row["missed"] or 0)
             )
         return result
 
@@ -221,6 +224,12 @@ class CallStore:
             return json.loads(value)
         except (TypeError, ValueError):
             return fallback
+
+    @staticmethod
+    def _is_missed_call(item: dict) -> bool:
+        return not str(item.get("recording_url") or "").strip() and str(
+            item.get("status") or ""
+        ).strip().casefold() in {"missed", "busy", "notavailable"}
 
     def calls_for_day(
         self, day: date, timezone: str, employee_id: str = "",
@@ -266,7 +275,11 @@ class CallStore:
             if not include_content:
                 item.pop("transcript_text", None)
                 item.pop("segments", None)
+            item["is_missed"] = self._is_missed_call(item)
             result.append(item)
+        # Keep conversations first and move non-connections to the bottom while
+        # preserving newest-first order inside both groups.
+        result.sort(key=lambda item: item["is_missed"])
         return result
 
     def call_detail(self, call_id: str, timezone: str) -> dict | None:
@@ -292,6 +305,7 @@ class CallStore:
         item["segments"] = self._decode_json(
             item.pop("transcript_segments_json") or "[]", []
         )
+        item["is_missed"] = self._is_missed_call(item)
         return item
 
     def begin_daily_report(
@@ -304,6 +318,7 @@ class CallStore:
                 "name": employees[employee_id],
                 "calls": item.calls,
                 "duration_seconds": item.duration_seconds,
+                "missed_calls": item.missed_calls,
             }
             for employee_id, item in stats.items()
         }
@@ -513,6 +528,7 @@ class CallStore:
         for extension, name in employees.items():
             employee_calls = [item for item in calls if item["employee_id"] == extension]
             item = stats.setdefault(extension, {"name": name, "calls": 0, "duration_seconds": 0})
+            item["missed_calls"] = sum(call["is_missed"] for call in employee_calls)
             item["analysis_completed"] = sum(
                 call["analysis_status"] == "completed" for call in employee_calls
             )
@@ -521,6 +537,7 @@ class CallStore:
             )
             item["recordings"] = sum(bool(call["recording_url"]) for call in employee_calls)
         result["employees"] = stats
+        result["missed_calls"] = sum(call["is_missed"] for call in calls)
         return result
 
     def calls_for_report(

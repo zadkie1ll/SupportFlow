@@ -38,6 +38,7 @@
     .metric { padding:15px 12px; border-radius:18px; background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
     .metric strong { display:block; font-size:21px; }
     .metric span { color:var(--muted); font-size:12px; }
+    .metric.missed strong { color:var(--red); }
     .managers { display:grid; gap:10px; }
     .manager { width:100%; border:1px solid transparent; display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center; text-align:left; padding:15px; border-radius:var(--radius); background:var(--surface); color:var(--text); box-shadow:0 5px 22px #1f31500a; }
     .manager.active { border-color:color-mix(in srgb,var(--accent) 55%,transparent); }
@@ -49,9 +50,11 @@
     .chevron { color:var(--muted); font-size:20px; }
     .calls { display:grid; gap:11px; }
     .call { padding:16px; border-radius:var(--radius); background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
+    .call.missed { border:1px solid color-mix(in srgb,var(--red) 45%,transparent); background:color-mix(in srgb,var(--red) 7%,var(--surface)); }
     .call-top { display:flex; align-items:center; gap:9px; }
     .call-time { font-weight:800; font-size:17px; }
     .direction { padding:4px 8px; border-radius:9px; background:color-mix(in srgb,var(--blue) 10%,transparent); color:var(--blue); font-size:12px; font-weight:700; }
+    .direction.missed { background:color-mix(in srgb,var(--red) 12%,transparent); color:var(--red); }
     .duration { margin-left:auto; color:var(--muted); font-size:13px; }
     .phone { color:var(--muted); margin-top:5px; font-size:13px; }
     .summary { margin:13px 0 0; padding:12px 13px; border-radius:14px; background:var(--bg); }
@@ -121,12 +124,13 @@
           <div class="metric"><strong>${report.total_calls}</strong><span>всего звонков</span></div>
           <div class="metric"><strong>${duration(totalDuration)}</strong><span>общая длительность</span></div>
           <div class="metric"><strong>${report.completed_calls}</strong><span>расшифровано</span></div>
+          <div class="metric missed"><strong>${report.missed_calls||0}</strong><span>недозвонов</span></div>
         </section>
         <div class="section-head"><h2>Менеджеры</h2><span>нажмите для звонков</span></div>
         <section class="managers">${people.map(([ext,item])=>`
           <button class="manager ${state.extension===ext?'active':''}" data-ext="${esc(ext)}">
             <span class="lamp ${reportLamp(item)}"></span><span><div class="manager-name">${esc(item.name)}</div>
-            <div class="manager-meta">${item.calls} звонков · ${duration(item.duration_seconds)} · ${item.analysis_completed}/${item.recordings} расшифровок</div></span><span class="chevron">›</span>
+            <div class="manager-meta">${item.calls} звонков · ${duration(item.duration_seconds)} · ${item.analysis_completed}/${item.recordings} расшифровок · <span style="color:var(--red)">${item.missed_calls||0} недозвонов</span></div></span><span class="chevron">›</span>
           </button>`).join("")}</section>
         <div id="callsArea"></div>`;
       document.querySelectorAll(".manager").forEach(button=>button.onclick=()=>loadCalls(button.dataset.ext));
@@ -144,6 +148,7 @@
       catch(error){ el("callsArea").innerHTML=`<div class="state">${esc(error.message)}</div>`; }
     }
     function callSummary(call) {
+      if(call.is_missed) return '<div class="summary"><div class="summary-label" style="color:var(--red)">Недозвон</div><p>Разговор не состоялся, поэтому записи и расшифровки нет.</p></div>';
       if(call.analysis_status==="processing"||call.analysis_status==="pending") return '<div class="summary"><div class="summary-label">Выжимка</div><p>Формируется…</p></div>';
       if(call.analysis_status==="error") return '<div class="summary"><div class="summary-label">Выжимка</div><p>Не удалось обработать запись</p></div>';
       if(!call.summary_text) return '<div class="summary"><div class="summary-label">Выжимка</div><p>Для звонка нет доступной записи</p></div>';
@@ -155,8 +160,8 @@
       const area=el("callsArea"); if(!area) return;
       area.innerHTML=`<div class="section-head"><h2>Звонки · ${esc(manager.name)}</h2><span>${state.calls.length}</span></div>
         <section class="calls">${state.calls.length?state.calls.map(call=>{ const dt=new Date(call.started_at); const incoming=["in","incoming"].includes(String(call.direction).toLowerCase()); return `
-          <article class="call" data-id="${esc(call.call_id)}"><div class="call-top"><span class="call-time">${esc(moscowShort(dt))}</span>
-          <span class="direction">${incoming?'↙ Входящий':'↗ Исходящий'}</span><span class="duration">${duration(call.duration_seconds)}</span></div>
+          <article class="call ${call.is_missed?'missed':''}" data-id="${esc(call.call_id)}"><div class="call-top"><span class="call-time">${esc(moscowShort(dt))}</span>
+          <span class="direction ${call.is_missed?'missed':''}">${call.is_missed?'● Недозвон':incoming?'↙ Входящий':'↗ Исходящий'}</span><span class="duration">${duration(call.duration_seconds)}</span></div>
           <div class="phone">${esc(call.client_phone||"Номер не указан")}</div>${callSummary(call)}
           ${call.analysis_status==="completed"?'<button class="open-call">Полная расшифровка</button>':''}<div class="detail"></div></article>`;}).join(""):'<div class="state">У менеджера нет звонков за этот день</div>'}</section>`;
       area.querySelectorAll(".open-call").forEach(button=>button.onclick=()=>openCall(button.closest(".call")));
