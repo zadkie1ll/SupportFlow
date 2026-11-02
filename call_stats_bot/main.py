@@ -36,7 +36,7 @@ _daily_workload_service: DailyWorkloadService | None = None
 
 
 def _store() -> CallStore:
-    return CallStore(get_settings().database_path)
+    return CallStore(get_settings().database_target)
 
 
 def _substitution_service() -> SubstitutionService | None:
@@ -49,7 +49,7 @@ def _substitution_service() -> SubstitutionService | None:
         gateway_token=settings.bitrix_gateway_token,
         gateway_profile=settings.bitrix_gateway_profile,
     )
-    return SubstitutionService(SubstitutionStore(settings.database_path), client)
+    return SubstitutionService(SubstitutionStore(settings.database_target), client)
 
 
 async def _send_report(day: date) -> None:

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import Mapping, Any
 
 from call_stats_bot.bitrix import BitrixClient
+from call_stats_bot.database import Database, DatabaseConnection
 
 logger = logging.getLogger(__name__)
 
@@ -39,18 +39,12 @@ class TelegramWizard:
 
 
 class SubstitutionStore:
-    def __init__(self, path: str):
-        self.path = path
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, target: str):
+        self.database = Database(target)
         self._initialize()
 
-    def _connect(self) -> sqlite3.Connection:
-        db = sqlite3.connect(self.path, timeout=20)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute("PRAGMA synchronous=FULL")
-        return db
+    def _connect(self) -> DatabaseConnection:
+        return self.database.connect(timeout=20)
 
     def _initialize(self) -> None:
         with self._connect() as db:
@@ -105,9 +99,7 @@ class SubstitutionStore:
                 );
                 """
             )
-            columns = {
-                row["name"] for row in db.execute("PRAGMA table_info(substitutions)").fetchall()
-            }
+            columns = db.columns("substitutions")
             if "source_extension" not in columns:
                 db.execute(
                     "ALTER TABLE substitutions ADD COLUMN source_extension TEXT NOT NULL DEFAULT ''"
@@ -126,7 +118,7 @@ class SubstitutionStore:
         return datetime.now(timezone.utc).isoformat()
 
     @staticmethod
-    def _substitution(row: sqlite3.Row) -> Substitution:
+    def _substitution(row: Mapping[str, Any]) -> Substitution:
         return Substitution(
             id=row["id"],
             source_user_id=int(row["source_user_id"]),
@@ -308,10 +300,11 @@ class SubstitutionStore:
         with self._connect() as db:
             cursor = db.execute(
                 """
-                INSERT OR IGNORE INTO substitution_deals(
+                INSERT INTO substitution_deals(
                     substitution_id, deal_id, deal_title, original_user_id,
                     replacement_user_id, observed_date_modify, state, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, 'planned', ?)
+                ON CONFLICT(substitution_id, deal_id) DO NOTHING
                 """,
                 (
                     operation.id, int(deal["ID"]), str(deal.get("TITLE", "")),
@@ -321,7 +314,7 @@ class SubstitutionStore:
             )
         return cursor.rowcount == 1
 
-    def deal_rows(self, operation_id: str, states: tuple[str, ...] | None = None) -> list[sqlite3.Row]:
+    def deal_rows(self, operation_id: str, states: tuple[str, ...] | None = None) -> list[Mapping[str, Any]]:
         query = "SELECT * FROM substitution_deals WHERE substitution_id=?"
         params: list[object] = [operation_id]
         if states:
@@ -408,13 +401,13 @@ class SubstitutionService:
         rows = self.store.deal_rows(operation.id, ("planned", "failed"))[: self.batch_size]
         semaphore = asyncio.Semaphore(self.concurrency)
 
-        async def guarded_apply(row: sqlite3.Row) -> None:
+        async def guarded_apply(row: Mapping[str, Any]) -> None:
             async with semaphore:
                 await self._apply_one(operation, row)
 
         await asyncio.gather(*(guarded_apply(row) for row in rows))
 
-    async def _apply_one(self, operation: Substitution, row: sqlite3.Row) -> None:
+    async def _apply_one(self, operation: Substitution, row: Mapping[str, Any]) -> None:
         try:
             current = await self.bitrix.get_deal(int(row["deal_id"]))
             owner = int(current["ASSIGNED_BY_ID"])
@@ -445,7 +438,7 @@ class SubstitutionService:
         rows = self.store.deal_rows(operation.id, ("applied", "failed"))[: self.batch_size]
         semaphore = asyncio.Semaphore(self.concurrency)
 
-        async def guarded_restore(row: sqlite3.Row) -> None:
+        async def guarded_restore(row: Mapping[str, Any]) -> None:
             async with semaphore:
                 await self._restore_one(operation, row)
 
@@ -456,7 +449,7 @@ class SubstitutionService:
         conflicts = self.store.deal_rows(operation.id, ("conflict",))
         self.store.set_status(operation.id, "attention" if conflicts else "completed")
 
-    async def _restore_one(self, operation: Substitution, row: sqlite3.Row) -> None:
+    async def _restore_one(self, operation: Substitution, row: Mapping[str, Any]) -> None:
         try:
             current = await self.bitrix.get_deal(int(row["deal_id"]))
             owner = int(current["ASSIGNED_BY_ID"])

@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     megafon_api_relay_url: str = ""
     report_time: str = "19:00"
     timezone: str = "Europe/Moscow"
+    database_url: str = ""
     database_path: str = "data/call_stats.sqlite3"
     bitrix_webhook_url: str = ""
     bitrix_gateway_url: str = ""
@@ -99,6 +100,10 @@ class Settings(BaseSettings):
     @property
     def normalized_miniapp_url(self) -> str:
         return self.miniapp_public_url.strip().rstrip("/")
+
+    @property
+    def database_target(self) -> str:
+        return self.database_url.strip() or self.database_path
 
 
 @lru_cache

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone as utc_timezone
-from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from call_stats_bot.database import Database, DatabaseConnection
 
 
 @dataclass(frozen=True)
@@ -16,19 +16,13 @@ class EmployeeStats:
 
 
 class CallStore:
-    def __init__(self, path: str):
-        self.path = path
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, target: str):
+        self.database = Database(target)
         self._initialize()
-        Path(path).chmod(0o600)
+        self.database.secure_sqlite_file()
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA synchronous=FULL")
-        return connection
+    def _connect(self) -> DatabaseConnection:
+        return self.database.connect(timeout=10)
 
     def _initialize(self) -> None:
         with self._connect() as db:
@@ -48,9 +42,7 @@ class CallStore:
                 )
                 """
             )
-            columns = {
-                row["name"] for row in db.execute("PRAGMA table_info(calls)").fetchall()
-            }
+            columns = db.columns("calls")
             for name in (
                 "direction", "client_phone", "company_phone", "recording_url", "ats_user"
             ):
@@ -112,9 +104,7 @@ class CallStore:
                 );
                 """
             )
-            report_columns = {
-                row["name"] for row in db.execute("PRAGMA table_info(daily_reports)").fetchall()
-            }
+            report_columns = db.columns("daily_reports")
             if "last_error" not in report_columns:
                 db.execute(
                     "ALTER TABLE daily_reports ADD COLUMN last_error TEXT NOT NULL DEFAULT ''"
@@ -404,9 +394,10 @@ class CallStore:
         with self._connect() as db:
             db.execute(
                 """
-                INSERT OR IGNORE INTO call_analyses(call_id, status, updated_at)
+                INSERT INTO call_analyses(call_id, status, updated_at)
                 SELECT call_id, CASE WHEN recording_url='' THEN 'skipped' ELSE 'pending' END, ?
                 FROM calls WHERE started_at >= ? AND started_at < ?
+                ON CONFLICT(call_id) DO NOTHING
                 """,
                 (now, start, end),
             )
@@ -415,9 +406,10 @@ class CallStore:
             # recording that has not been analyzed so it cannot fall between days.
             db.execute(
                 """
-                INSERT OR IGNORE INTO call_analyses(call_id, status, updated_at)
+                INSERT INTO call_analyses(call_id, status, updated_at)
                 SELECT call_id, 'pending', ? FROM calls
                 WHERE started_at < ? AND recording_url <> ''
+                ON CONFLICT(call_id) DO NOTHING
                 """,
                 (now, end),
             )

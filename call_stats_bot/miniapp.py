@@ -69,7 +69,7 @@ def require_admin(init_data: str = Depends(_init_data)) -> dict:
 
 
 def _store() -> CallStore:
-    return CallStore(get_settings().database_path)
+    return CallStore(get_settings().database_target)
 
 
 @router.get("/support", include_in_schema=False)
