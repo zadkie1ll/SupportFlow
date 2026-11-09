@@ -89,6 +89,7 @@ def _analysis_service() -> DailyAnalysisService | None:
             summary_model=settings.call_summary_model,
             download_timeout_seconds=settings.analysis_download_timeout_seconds,
             max_audio_bytes=settings.analysis_max_audio_bytes,
+            chunk_seconds=settings.analysis_chunk_seconds,
             recording_relay_url=settings.recording_relay_url,
         )
         _daily_analysis_service = DailyAnalysisService(

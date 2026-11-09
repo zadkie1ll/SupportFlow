@@ -8,8 +8,10 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import parse_qsl
 
+import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
 from call_stats_bot.config import get_settings
 from call_stats_bot.roles import load_roles
@@ -72,6 +74,18 @@ def _store() -> CallStore:
     return CallStore(get_settings().database_target)
 
 
+def _public_call(item: dict) -> dict:
+    """Expose recording availability without leaking the ATS recording URL."""
+    result = dict(item)
+    result["has_recording"] = bool(result.pop("recording_url", ""))
+    return result
+
+
+async def _close_recording(response: httpx.Response, client: httpx.AsyncClient) -> None:
+    await response.aclose()
+    await client.aclose()
+
+
 @router.get("/support", include_in_schema=False)
 @router.get("/support/", include_in_schema=False)
 async def miniapp_page() -> FileResponse:
@@ -111,7 +125,11 @@ async def employee_calls(
     if extension not in settings.report_employee_ids:
         raise HTTPException(status_code=404, detail="Employee not found")
     calls = _store().calls_for_report(report_day, settings.timezone, extension)
-    return {"day": report_day.isoformat(), "extension": extension, "items": calls}
+    return {
+        "day": report_day.isoformat(),
+        "extension": extension,
+        "items": [_public_call(call) for call in calls],
+    }
 
 
 @router.get("/api/support/calls/{call_id}")
@@ -119,4 +137,60 @@ async def call_detail(call_id: str, _: dict = Depends(require_admin)) -> dict:
     result = _store().call_detail(call_id, get_settings().timezone)
     if result is None:
         raise HTTPException(status_code=404, detail="Call not found")
-    return result
+    return _public_call(result)
+
+
+@router.get("/api/support/calls/{call_id}/recording")
+async def call_recording(
+    call_id: str,
+    range_header: str = Header(default="", alias="Range"),
+    _: dict = Depends(require_admin),
+) -> StreamingResponse:
+    settings = get_settings()
+    call = _store().call_detail(call_id, settings.timezone)
+    if call is None:
+        raise HTTPException(status_code=404, detail="Call not found")
+    recording_url = str(call.get("recording_url") or "").strip()
+    if not recording_url:
+        raise HTTPException(status_code=404, detail="Recording is not available")
+
+    source_url = settings.recording_relay_url.strip() or recording_url
+    params = {"url": recording_url} if settings.recording_relay_url.strip() else None
+    client = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=20))
+    try:
+        request = client.build_request(
+            "GET", source_url, params=params,
+            headers={"Range": range_header} if range_header else None,
+        )
+        response = await client.send(request, stream=True)
+        if response.status_code >= 400:
+            status = response.status_code
+            await response.aclose()
+            await client.aclose()
+            raise HTTPException(
+                status_code=502, detail=f"Recording server returned {status}"
+            )
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        await client.aclose()
+        raise HTTPException(
+            status_code=502, detail="Recording server is unavailable"
+        ) from exc
+
+    headers = {
+        "Cache-Control": "private, no-store",
+        **{
+            key: value for key, value in response.headers.items()
+            if key.casefold() in {
+                "content-type", "content-length", "content-range", "accept-ranges",
+            }
+        },
+    }
+    return StreamingResponse(
+        response.aiter_bytes(),
+        status_code=response.status_code,
+        headers=headers,
+        media_type=response.headers.get("content-type", "audio/mpeg").split(";", 1)[0],
+        background=BackgroundTask(_close_recording, response, client),
+    )

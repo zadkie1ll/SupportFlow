@@ -10,10 +10,13 @@ import time
 import unittest
 from datetime import UTC, date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
-from call_stats_bot.analysis import AnalysisResult, CallContentSummary, DailyAnalysisService
+from call_stats_bot.analysis import (
+    AnalysisResult, CallAnalyzer, CallContentSummary, DailyAnalysisService,
+)
 from call_stats_bot.megafon import parse_history_event
 from call_stats_bot.main import _active_report_day
 from call_stats_bot.miniapp import verify_telegram_init_data
@@ -60,6 +63,39 @@ class FakeWorkloadAnalyzer:
 
 
 class CallReportTests(unittest.TestCase):
+    def test_split_transcript_offsets_and_speaker_ids_are_preserved(self):
+        response = SimpleNamespace(
+            segments=[{"speaker": "speaker_0", "start": 2.5, "end": 8.0, "text": "Алло"}],
+            text="Алло",
+        )
+        segments, fallback = CallAnalyzer._merge_part(
+            response, part_number=2, offset=900.0, multiple=True
+        )
+        self.assertEqual(segments[0]["speaker"], "part_2:speaker_0")
+        self.assertEqual(segments[0]["start"], 902.5)
+        self.assertEqual(segments[0]["end"], 908.0)
+        self.assertEqual(fallback, "Алло")
+
+    def test_speakers_from_all_audio_parts_are_mapped(self):
+        segments = [
+            {"speaker": "part_1:a", "text": "Добрый день"},
+            {"speaker": "part_1:b", "text": "Здравствуйте"},
+            {"speaker": "part_2:x", "text": "Продолжим"},
+            {"speaker": "part_2:y", "text": "Да"},
+        ]
+        summary = CallContentSummary(
+            short_summary="Разговор продолжился после разбиения.",
+            client_request="Уточнение",
+            result="Ответ получен",
+            manager_speakers=["part_1:a", "part_2:x"],
+            client_speakers=["part_1:b", "part_2:y"],
+        )
+        mapped = CallAnalyzer._map_speakers(segments, summary)
+        self.assertEqual(
+            [item["speaker"] for item in mapped],
+            ["manager", "client", "manager", "client"],
+        )
+
     def test_old_calls_table_is_migrated_without_data_loss(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "calls.sqlite3"

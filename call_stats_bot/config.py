@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     analysis_concurrency: int = 2
     analysis_download_timeout_seconds: int = 120
     analysis_max_audio_bytes: int = 104857600
+    analysis_chunk_seconds: int = 1200
     recording_relay_url: str = ""
 
     @property
