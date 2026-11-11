@@ -409,7 +409,7 @@ async def _send_replacements(chat_id: int, service: SubstitutionService) -> None
             f"{escape(operation.target_name)} · {operation.source_extension}→{operation.target_extension} "
             f"· {operation.status}\n{details}"
         )
-        if operation.status in {"active", "attention"}:
+        if operation.status == "active":
             buttons.append(
                 [(f"Вернуть {operation.source_extension} сейчас", f"sub:restore:{operation.id}")]
             )
@@ -784,11 +784,17 @@ async def _substitution_loop(service: SubstitutionService) -> None:
                         _inline_keyboard([[("Посмотреть операции", "sub:list")]]),
                     )
                 if current.status != previous and current.status in {"completed", "attention"}:
-                    text = (
-                        f"Замещение <code>{current.id[:8]}</code>: {current.status}. "
-                        f"Восстановлено {after_counts.get('restored', 0)}, "
-                        f"конфликтов {after_counts.get('conflict', 0)}, ошибок {after_counts.get('failed', 0)}."
-                    )
+                    if current.status == "attention":
+                        text = (
+                            f"Замещение <code>{current.id[:8]}</code> завершено с ручными изменениями. "
+                            f"Восстановлено {after_counts.get('restored', 0)}, "
+                            f"сохранено ручных переводов: {after_counts.get('conflict', 0)}."
+                        )
+                    else:
+                        text = (
+                            f"Замещение <code>{current.id[:8]}</code> завершено. "
+                            f"Восстановлено {after_counts.get('restored', 0)} сделок."
+                        )
                     await asyncio.gather(*(
                         send_message(settings.telegram_bot_token, chat_id, text)
                         for chat_id in settings.chat_ids

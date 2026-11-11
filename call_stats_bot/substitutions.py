@@ -438,7 +438,7 @@ class SubstitutionService:
             self.store.mark_deal(operation.id, int(row["deal_id"]), "failed", str(exc))
 
     async def start_restore(self, operation: Substitution) -> None:
-        if operation.status not in {"active", "attention"}:
+        if operation.status != "active":
             raise ValueError("Operation cannot be restored from its current state")
         self.store.set_status(operation.id, "restoring")
 

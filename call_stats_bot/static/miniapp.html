@@ -249,7 +249,7 @@
       el("backFromWorkload").onclick=goBack;
       window.scrollTo({top:0,behavior:"smooth"});
     }
-    const substitutionLabels = {draft:"Ожидает подтверждения",active:"Замещение действует",restoring:"Возвращаем сделки",completed:"Завершено",attention:"Нужна проверка конфликтов"};
+    const substitutionLabels = {draft:"Ожидает подтверждения",active:"Замещение действует",restoring:"Возвращаем сделки",completed:"Завершено",attention:"Завершено с ручными изменениями"};
     const localInputValue = date => new Intl.DateTimeFormat("sv-SE",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23",timeZone:"Europe/Moscow"}).format(date).replace(" ","T");
     const moscowInputToISO = value => new Date(`${value}:00+03:00`).toISOString();
     const presetDate = kind => {
@@ -265,13 +265,14 @@
       return Math.min(100,Math.round(done/total*100));
     }
     function operationCard(operation) {
-      const c=operation.counts||{}, progress=operationProgress(operation), canRestore=["active","attention"].includes(operation.status);
+      const c=operation.counts||{}, progress=operationProgress(operation), canRestore=operation.status==="active", terminalNote=operation.status==="attention"?`<div class="warning">${c.conflict||0} сделок уже были вручную переданы другим ответственным. Бот сохранил эти изменения и завершил операцию.</div>`:"";
       return `<article class="replacement-card" data-operation="${esc(operation.id)}">
         <h3>${esc(operation.source_name)} → ${esc(operation.target_name)}</h3>
         <p>${esc(operation.source_extension)} → ${esc(operation.target_extension)} · возврат ${esc(moscowDateTime(operation.ends_at))}</p>
         <span class="replacement-status">${esc(substitutionLabels[operation.status]||operation.status)}</span>
         <div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div>
         <p>${operation.status==="restoring"||operation.status==="completed"||operation.status==="attention"?`Возвращено ${c.restored||0}/${operation.total}`:`Перенесено ${c.applied||0}/${operation.total}`} · конфликтов ${c.conflict||0} · ошибок ${c.failed||0}</p>
+        ${terminalNote}
         ${canRestore?'<div class="replacement-actions"><button class="danger-btn restore-operation">↩ Вернуть сейчас</button></div>':''}
       </article>`;
     }
@@ -289,7 +290,7 @@
       clearInterval(state.substitutionTimer); state.substitutionTimer=setInterval(()=>loadSubstitutions({quiet:true}),3000);
     }
     function renderSubstitutionList() {
-      const data=state.substitutions||{employees:[],operations:[]}, active=data.operations.filter(x=>["draft","active","restoring","attention"].includes(x.status)), history=data.operations.filter(x=>x.status==="completed");
+      const data=state.substitutions||{employees:[],operations:[]}, active=data.operations.filter(x=>["draft","active","restoring"].includes(x.status)), history=data.operations.filter(x=>["completed","attention"].includes(x.status));
       el("heroTitle").textContent="Замещения"; el("heroDate").textContent="Управление сделками Bitrix24"; el("reportStatus").textContent=active.length?`● Активных операций: ${active.length}`:"● Активных замещений нет";
       el("content").innerHTML=`<button class="back-nav" id="backFromSubstitutions">← К отчётам</button><button class="primary-btn" id="newSubstitution">➕ Создать замещение</button>
         <div class="section-head"><h2>Текущие операции</h2><span>${active.length}</span></div><section class="replacement-list">${active.length?active.map(operationCard).join(""):'<div class="state">Активных замещений нет</div>'}</section>
