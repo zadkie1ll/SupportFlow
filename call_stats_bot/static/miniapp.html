@@ -37,8 +37,34 @@
     .manager-page-head { margin:14px 0 12px; padding:18px; border-radius:var(--radius); background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
     .manager-page-head h2 { margin:0; font-size:22px; }
     .manager-page-head p { margin:5px 0 0; color:var(--muted); }
-    .workload-entry { width:100%; margin-top:14px; border:0; border-radius:18px; padding:15px 16px; text-align:left; background:linear-gradient(135deg,#243b85,#496ff2); color:#fff; font-weight:800; box-shadow:0 10px 28px #254cb32e; }
+    .action-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px; }
+    .workload-entry { width:100%; border:0; border-radius:18px; padding:15px 16px; text-align:left; background:linear-gradient(135deg,#243b85,#496ff2); color:#fff; font-weight:800; box-shadow:0 10px 28px #254cb32e; }
     .workload-entry small { display:block; margin-top:3px; opacity:.76; font-weight:500; }
+    .replacement-entry { background:linear-gradient(135deg,#176957,#25a784); }
+    .replacement-list { display:grid; gap:11px; }
+    .replacement-card { padding:16px; border-radius:var(--radius); background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
+    .replacement-card h3 { margin:0; font-size:17px; }
+    .replacement-card p { margin:5px 0 0; color:var(--muted); }
+    .replacement-status { display:inline-block; margin-top:9px; padding:5px 9px; border-radius:9px; background:color-mix(in srgb,var(--accent) 11%,transparent); color:var(--accent); font-size:12px; font-weight:800; }
+    .progress-track { height:8px; margin-top:12px; overflow:hidden; border-radius:999px; background:var(--bg); }
+    .progress-fill { height:100%; min-width:0; border-radius:inherit; background:linear-gradient(90deg,#4169e1,#25a784); transition:width .35s ease; }
+    .replacement-actions { display:flex; gap:8px; margin-top:12px; }
+    .primary-btn,.secondary-btn,.danger-btn { width:100%; border:0; border-radius:12px; padding:11px 12px; font-weight:750; }
+    .primary-btn { background:var(--accent); color:var(--accent-text); }
+    .secondary-btn { background:color-mix(in srgb,var(--accent) 10%,var(--surface)); color:var(--accent); border:1px solid color-mix(in srgb,var(--accent) 28%,transparent); }
+    .danger-btn { background:color-mix(in srgb,var(--red) 11%,var(--surface)); color:var(--red); border:1px solid color-mix(in srgb,var(--red) 30%,transparent); }
+    .wizard-card { padding:18px; border-radius:var(--radius); background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
+    .wizard-card h2 { margin:0; font-size:20px; }
+    .wizard-card > p { margin:5px 0 14px; color:var(--muted); }
+    .employee-options { display:grid; gap:9px; }
+    .employee-option { width:100%; display:flex; justify-content:space-between; align-items:center; border:1px solid var(--line); border-radius:14px; padding:12px 13px; text-align:left; background:var(--bg); color:var(--text); }
+    .employee-option.selected { border-color:var(--accent); box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 14%,transparent); }
+    .employee-option small { color:var(--muted); }
+    .date-presets { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
+    .date-presets button { border:1px solid var(--line); border-radius:12px; padding:10px; background:var(--bg); color:var(--text); }
+    .date-field { width:100%; border:1px solid var(--line); border-radius:12px; padding:12px; background:var(--bg); color:var(--text); font:inherit; }
+    .wizard-nav { display:flex; gap:8px; margin-top:15px; }
+    .warning { margin-top:12px; padding:11px 12px; border-radius:12px; color:#9a6500; background:color-mix(in srgb,var(--yellow) 12%,var(--surface)); font-size:13px; }
     .workload-list { display:grid; gap:12px; }
     .workload-card { padding:17px; border-radius:var(--radius); background:var(--surface); box-shadow:0 5px 22px #1f31500a; }
     .workload-card h3 { margin:0; font-size:19px; }
@@ -96,7 +122,8 @@
     .status-pill { display:inline-flex; align-items:center; gap:6px; margin-top:12px; padding:6px 10px; border-radius:12px; background:#ffffff1a; font-size:12px; }
     .hidden { display:none !important; }
     @keyframes spin { to { transform:rotate(360deg); } }
-    @media (min-width:640px) { .managers { grid-template-columns:1fr 1fr; } .hero { padding:30px; } }
+    @media (max-width:430px) { .action-grid { grid-template-columns:1fr; } }
+    @media (min-width:640px) { .managers,.employee-options { grid-template-columns:1fr 1fr; } .hero { padding:30px; } }
   </style>
 </head>
 <body>
@@ -114,7 +141,7 @@
     const tg = window.Telegram?.WebApp;
     tg?.ready(); tg?.expand();
     const initData = tg?.initData || "";
-    const state = { reports: [], day: null, report: null, view: "overview", extension: null, calls: [], audioUrls: new Set() };
+    const state = { reports: [], day: null, report: null, view: "overview", extension: null, calls: [], audioUrls: new Set(), substitutions: null, substitutionTimer: null, wizard: null };
     const el = id => document.getElementById(id);
     const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
     const duration = seconds => { seconds=Number(seconds||0); const h=Math.floor(seconds/3600), m=Math.floor(seconds%3600/60), s=seconds%60; return [h&&`${h} ч`,m&&`${m} мин`,(!h&&!m||s)&&`${s} сек`].filter(Boolean).join(" "); };
@@ -124,9 +151,9 @@
     const offsetTime = seconds => { seconds=Math.max(0,Math.floor(Number(seconds)||0)); return `${String(Math.floor(seconds/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`; };
     const periodLabel = report => report.period_start&&report.period_end?`${moscowDateTime(report.period_start)} — ${moscowDateTime(report.period_end)}`:dayLabel(report.report_day);
     const telegramBack = tg?.BackButton;
-    async function api(path) {
+    async function api(path, options={}) {
       if (!initData) throw new Error("Откройте приложение кнопкой внутри Telegram-бота");
-      const response = await fetch(path,{headers:{Authorization:`tma ${initData}`}});
+      const response = await fetch(path,{...options,headers:{Authorization:`tma ${initData}`,"Content-Type":"application/json",...(options.headers||{})}});
       if (!response.ok) { const body=await response.json().catch(()=>({})); throw new Error(body.detail||`Ошибка ${response.status}`); }
       return response.json();
     }
@@ -144,6 +171,7 @@
     function showOverviewHeader() {
       el("heroTitle").textContent="Разговоры за день";
       el("heroDate").textContent=periodLabel(state.report);
+      el("datePicker").classList.remove("hidden");
       telegramBack?.hide();
     }
     function renderReport() {
@@ -159,7 +187,10 @@
           <div class="metric"><strong>${report.completed_calls}</strong><span>расшифровано</span></div>
           <div class="metric missed"><strong>${report.missed_calls||0}</strong><span>недозвонов</span></div>
         </section>
-        <button class="workload-entry" id="openWorkload">📊 Анализ занятости<small>Телефонная нагрузка и соответствие ролям сотрудников</small></button>
+        <div class="action-grid">
+          <button class="workload-entry" id="openWorkload">📊 Анализ занятости<small>Нагрузка и соответствие ролям</small></button>
+          <button class="workload-entry replacement-entry" id="openSubstitutions">🔁 Замещения<small>Перенос и возврат сделок Bitrix24</small></button>
+        </div>
         <div class="section-head"><h2>Менеджеры</h2><span>нажмите для звонков</span></div>
         <section class="managers">${people.map(([ext,item])=>`
           <button class="manager" data-ext="${esc(ext)}">
@@ -169,6 +200,7 @@
           </button>`).join("")}</section>`;
       document.querySelectorAll(".manager").forEach(button=>button.onclick=()=>loadCalls(button.dataset.ext));
       el("openWorkload").onclick=renderWorkloadPage;
+      el("openSubstitutions").onclick=openSubstitutions;
     }
     async function selectDay(day) {
       releaseAudio();
@@ -185,6 +217,8 @@
     }
     function goBack() {
       releaseAudio();
+      if(state.wizard?.draft?.id) api(`/api/support/substitutions/${encodeURIComponent(state.wizard.draft.id)}/cancel`,{method:"POST"}).catch(()=>{});
+      clearInterval(state.substitutionTimer); state.substitutionTimer=null; state.wizard=null;
       state.view="overview"; state.extension=null; state.calls=[]; renderReport(); renderDates();
       window.scrollTo({top:0,behavior:"smooth"});
     }
@@ -195,6 +229,7 @@
       state.view="workload"; state.extension=null; state.calls=[];
       el("heroTitle").textContent="Анализ занятости";
       el("heroDate").textContent=periodLabel(state.report);
+      el("datePicker").classList.add("hidden");
       telegramBack?.show();
       const analyses=state.report.workload_analyses||{};
       const cards=Object.entries(state.report.employees||{}).map(([ext,manager])=>{
@@ -214,6 +249,79 @@
       el("backFromWorkload").onclick=goBack;
       window.scrollTo({top:0,behavior:"smooth"});
     }
+    const substitutionLabels = {draft:"Ожидает подтверждения",active:"Замещение действует",restoring:"Возвращаем сделки",completed:"Завершено",attention:"Нужна проверка конфликтов"};
+    const localInputValue = date => new Intl.DateTimeFormat("sv-SE",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23",timeZone:"Europe/Moscow"}).format(date).replace(" ","T");
+    const moscowInputToISO = value => new Date(`${value}:00+03:00`).toISOString();
+    const presetDate = kind => {
+      const today=localInputValue(new Date()).slice(0,10), hour=kind==="tomorrow09"?"09:00":"20:00";
+      const result=new Date(`${today}T${hour}:00+03:00`), days=kind==="week20"?7:(kind==="tomorrow09"||kind==="tomorrow20"?1:0);
+      result.setUTCDate(result.getUTCDate()+days);
+      return result;
+    };
+    function operationProgress(operation) {
+      const c=operation.counts||{}, total=Number(operation.total||0);
+      if(!total) return 0;
+      const done=operation.status==="restoring"||operation.status==="completed"||operation.status==="attention" ? Number(c.restored||0)+Number(c.conflict||0) : Number(c.applied||0)+Number(c.conflict||0);
+      return Math.min(100,Math.round(done/total*100));
+    }
+    function operationCard(operation) {
+      const c=operation.counts||{}, progress=operationProgress(operation), canRestore=["active","attention"].includes(operation.status);
+      return `<article class="replacement-card" data-operation="${esc(operation.id)}">
+        <h3>${esc(operation.source_name)} → ${esc(operation.target_name)}</h3>
+        <p>${esc(operation.source_extension)} → ${esc(operation.target_extension)} · возврат ${esc(moscowDateTime(operation.ends_at))}</p>
+        <span class="replacement-status">${esc(substitutionLabels[operation.status]||operation.status)}</span>
+        <div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div>
+        <p>${operation.status==="restoring"||operation.status==="completed"||operation.status==="attention"?`Возвращено ${c.restored||0}/${operation.total}`:`Перенесено ${c.applied||0}/${operation.total}`} · конфликтов ${c.conflict||0} · ошибок ${c.failed||0}</p>
+        ${canRestore?'<div class="replacement-actions"><button class="danger-btn restore-operation">↩ Вернуть сейчас</button></div>':''}
+      </article>`;
+    }
+    async function loadSubstitutions({quiet=false}={}) {
+      try {
+        const data=await api("/api/support/substitutions"); state.substitutions=data;
+        if(state.view==="substitutions"&&!state.wizard) renderSubstitutionList();
+      } catch(error) { if(!quiet) setError(error); }
+    }
+    async function openSubstitutions() {
+      releaseAudio(); state.view="substitutions"; state.wizard=null;
+      el("datePicker").classList.add("hidden"); el("heroTitle").textContent="Замещения"; el("heroDate").textContent="Управление сделками Bitrix24"; telegramBack?.show();
+      el("content").innerHTML='<div class="state"><div class="spinner"></div>Загружаем замещения</div>';
+      await loadSubstitutions();
+      clearInterval(state.substitutionTimer); state.substitutionTimer=setInterval(()=>loadSubstitutions({quiet:true}),3000);
+    }
+    function renderSubstitutionList() {
+      const data=state.substitutions||{employees:[],operations:[]}, active=data.operations.filter(x=>["draft","active","restoring","attention"].includes(x.status)), history=data.operations.filter(x=>x.status==="completed");
+      el("heroTitle").textContent="Замещения"; el("heroDate").textContent="Управление сделками Bitrix24"; el("reportStatus").textContent=active.length?`● Активных операций: ${active.length}`:"● Активных замещений нет";
+      el("content").innerHTML=`<button class="back-nav" id="backFromSubstitutions">← К отчётам</button><button class="primary-btn" id="newSubstitution">➕ Создать замещение</button>
+        <div class="section-head"><h2>Текущие операции</h2><span>${active.length}</span></div><section class="replacement-list">${active.length?active.map(operationCard).join(""):'<div class="state">Активных замещений нет</div>'}</section>
+        ${history.length?`<div class="section-head"><h2>История</h2><span>${history.length}</span></div><section class="replacement-list">${history.slice(0,10).map(operationCard).join("")}</section>`:""}`;
+      el("backFromSubstitutions").onclick=goBack; el("newSubstitution").onclick=startSubstitutionWizard;
+      el("content").querySelectorAll(".restore-operation").forEach(button=>button.onclick=()=>restoreOperation(button.closest("[data-operation]").dataset.operation,button));
+    }
+    function startSubstitutionWizard() { state.wizard={step:1,source:null,target:null,endsAt:null,draft:null}; renderSubstitutionWizard(); }
+    function wizardEmployeeButton(employee,selected,disabled=false) { return `<button class="employee-option ${selected?'selected':''}" data-extension="${esc(employee.extension)}" ${disabled?'disabled':''}><span><b>${esc(employee.name)}</b><br><small>Внутренний ${esc(employee.extension)}</small></span><span>${employee.active?'●':'○'}</span></button>`; }
+    function renderSubstitutionWizard(error="") {
+      const wizard=state.wizard, employees=state.substitutions?.employees||[]; if(!wizard){ renderSubstitutionList(); return; }
+      el("reportStatus").textContent=`● Шаг ${Math.min(wizard.step,4)} из 4`;
+      let body="";
+      if(wizard.step===1) body=`<h2>С кого снять сделки?</h2><p>Можно выбрать активного сотрудника или бывшего сотрудника, если на нём остались сделки.</p><div class="employee-options">${employees.map(x=>wizardEmployeeButton(x,wizard.source===x.extension)).join("")}</div>`;
+      if(wizard.step===2) body=`<h2>До какого времени?</h2><p>В указанное время сделки автоматически вернутся прежнему ответственному.</p><div class="date-presets"><button data-preset="tomorrow09">Завтра, 09:00</button><button data-preset="tomorrow20">Завтра, 20:00</button><button data-preset="week20">Через 7 дней</button><button data-preset="today20">Сегодня, 20:00</button></div><input class="date-field" id="replacementDate" type="datetime-local" value="${esc(wizard.endsAt?localInputValue(new Date(wizard.endsAt)):"")}">`;
+      if(wizard.step===3) body=`<h2>На кого перевести?</h2><p>Получателем может быть только активный сотрудник.</p><div class="employee-options">${employees.filter(x=>x.active&&x.extension!==wizard.source).map(x=>wizardEmployeeButton(x,wizard.target===x.extension)).join("")}</div>`;
+      if(wizard.step===4&&wizard.draft) body=`<h2>Проверьте замещение</h2><p>${esc(wizard.draft.source_name)} → ${esc(wizard.draft.target_name)}</p><div class="workload-metrics"><div class="workload-metric"><b>${wizard.draft.total}</b><span>активных сделок</span></div><div class="workload-metric"><b>${esc(moscowDateTime(wizard.draft.ends_at))}</b><span>автовозврат</span></div></div><div class="warning">Изменения начнутся только после подтверждения. Ручные изменения ответственного бот не перезапишет.</div>`;
+      el("content").innerHTML=`<button class="back-nav" id="cancelWizard">← Отменить создание</button><section class="wizard-card">${body}${error?`<div class="warning">${esc(error)}</div>`:""}<div class="wizard-nav">${wizard.step>1&&wizard.step<4?'<button class="secondary-btn" id="wizardPrev">Назад</button>':''}<button class="primary-btn" id="wizardNext">${wizard.step===3?'Проверить сделки':wizard.step===4?'✅ Подтвердить':'Продолжить'}</button>${wizard.step===4?'<button class="danger-btn" id="cancelDraft">Отменить</button>':''}</div></section>`;
+      el("cancelWizard").onclick=()=>cancelWizard(true); el("wizardPrev")?.addEventListener("click",()=>{wizard.step--;renderSubstitutionWizard();});
+      if(wizard.step===1||wizard.step===3) el("content").querySelectorAll(".employee-option").forEach(button=>button.onclick=()=>{ if(wizard.step===1) wizard.source=button.dataset.extension; else wizard.target=button.dataset.extension; renderSubstitutionWizard(); });
+      if(wizard.step===2) el("content").querySelectorAll("[data-preset]").forEach(button=>button.onclick=()=>{wizard.endsAt=presetDate(button.dataset.preset).toISOString();renderSubstitutionWizard();});
+      el("wizardNext").onclick=()=>advanceWizard(); el("cancelDraft")?.addEventListener("click",()=>cancelWizard(true));
+    }
+    async function advanceWizard() {
+      const wizard=state.wizard, button=el("wizardNext");
+      if(wizard.step===1){ if(!wizard.source) return renderSubstitutionWizard("Выберите исходного сотрудника"); wizard.step=2; return renderSubstitutionWizard(); }
+      if(wizard.step===2){ const value=el("replacementDate").value, iso=value?moscowInputToISO(value):null; if(!iso||new Date(iso)<=new Date()) return renderSubstitutionWizard("Укажите будущую дату возврата"); wizard.endsAt=iso; wizard.step=3; return renderSubstitutionWizard(); }
+      if(wizard.step===3){ if(!wizard.target) return renderSubstitutionWizard("Выберите замещающего сотрудника"); button.disabled=true; button.textContent="Проверяем сделки…"; try { wizard.draft=await api("/api/support/substitutions/preview",{method:"POST",body:JSON.stringify({source_extension:wizard.source,target_extension:wizard.target,ends_at:wizard.endsAt})}); wizard.step=4; renderSubstitutionWizard(); } catch(error){ renderSubstitutionWizard(error.message); } return; }
+      if(wizard.step===4){ button.disabled=true; button.textContent="Запускаем перенос…"; try { await api(`/api/support/substitutions/${encodeURIComponent(wizard.draft.id)}/confirm`,{method:"POST"}); state.wizard=null; await loadSubstitutions(); tg?.HapticFeedback?.notificationOccurred("success"); } catch(error){ renderSubstitutionWizard(error.message); } }
+    }
+    async function cancelWizard(cancelDraft=false) { const wizard=state.wizard; if(cancelDraft&&wizard?.draft) await api(`/api/support/substitutions/${encodeURIComponent(wizard.draft.id)}/cancel`,{method:"POST"}).catch(()=>{}); state.wizard=null; await loadSubstitutions(); }
+    async function restoreOperation(id,button) { if(!confirm("Вернуть сделки исходному сотруднику сейчас?")) return; button.disabled=true; button.textContent="Запускаем возврат…"; try { await api(`/api/support/substitutions/${encodeURIComponent(id)}/restore`,{method:"POST"}); await loadSubstitutions(); } catch(error){ alert(error.message); button.disabled=false; button.textContent="↩ Вернуть сейчас"; } }
     function callSummary(call) {
       if(call.is_voicemail) return `<div class="summary"><div class="summary-label" style="color:var(--red)">Автоответчик</div><p>${esc(call.summary?.voicemail_reason||"Звонок завершился на автоответчике или голосовой почте.")}</p></div>`;
       if(call.is_missed) return '<div class="summary"><div class="summary-label" style="color:var(--red)">Недозвон</div><p>Разговор не состоялся, поэтому записи и расшифровки нет.</p></div>';
@@ -228,6 +336,7 @@
       if(!manager){ goBack(); return; }
       el("heroTitle").textContent=manager.name;
       el("heroDate").textContent=periodLabel(state.report);
+      el("datePicker").classList.add("hidden");
       telegramBack?.show();
       el("content").innerHTML=`<button class="back-nav" id="backToManagers">← Все менеджеры</button>
         <section class="manager-page-head"><h2>${esc(manager.name)}</h2>

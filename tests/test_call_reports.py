@@ -22,6 +22,7 @@ from call_stats_bot.main import _active_report_day
 from call_stats_bot.miniapp import verify_telegram_init_data
 from call_stats_bot.roles import load_roles
 from call_stats_bot.store import CallStore
+from call_stats_bot.substitutions import SubstitutionStore
 from call_stats_bot.workload import DailyWorkloadService, build_workload_metrics
 
 
@@ -63,6 +64,25 @@ class FakeWorkloadAnalyzer:
 
 
 class CallReportTests(unittest.TestCase):
+    def test_abandoned_substitution_preview_is_released_for_same_admin(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = SubstitutionStore(str(Path(temporary) / "calls.sqlite3"))
+            first = store.create_draft(
+                source_user_id=1, target_user_id=2,
+                source_name="Первый", target_name="Второй",
+                source_extension="701", target_extension="702",
+                ends_at=datetime(2030, 1, 1, tzinfo=UTC), created_by=100,
+            )
+            second = store.create_draft(
+                source_user_id=3, target_user_id=4,
+                source_name="Третий", target_name="Четвёртый",
+                source_extension="703", target_extension="704",
+                ends_at=datetime(2030, 1, 1, tzinfo=UTC), created_by=200,
+            )
+            store.cancel_drafts_by_creator(100)
+            self.assertEqual(store.get(first.id).status, "cancelled")
+            self.assertEqual(store.get(second.id).status, "draft")
+
     def test_split_transcript_offsets_and_speaker_ids_are_preserved(self):
         response = SimpleNamespace(
             segments=[{"speaker": "speaker_0", "start": 2.5, "end": 8.0, "text": "Алло"}],

@@ -799,7 +799,7 @@ async def _substitution_loop(service: SubstitutionService) -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
     _store()
     settings = get_settings()
     if settings.normalized_miniapp_url:
@@ -811,13 +811,15 @@ async def lifespan(_: FastAPI):
             # A temporary Telegram outage must not stop call webhooks or reports.
             logger.exception("Cannot configure Telegram Mini App menu button")
     service = _substitution_service()
+    app.state.substitution_service = service
+    app.state.employee_roster = _roster(service) if service is not None else None
     tasks = [
         asyncio.create_task(_report_loop()),
         asyncio.create_task(_analysis_loop()),
     ]
     if service is not None:
         tasks.append(asyncio.create_task(_substitution_loop(service)))
-        tasks.append(asyncio.create_task(_roster(service).polling_loop()))
+        tasks.append(asyncio.create_task(app.state.employee_roster.polling_loop()))
     if settings.telegram_polling_enabled:
         tasks.append(asyncio.create_task(_telegram_poll_loop(service)))
     yield

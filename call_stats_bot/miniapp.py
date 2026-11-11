@@ -4,21 +4,31 @@ import hashlib
 import hmac
 import json
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qsl
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from call_stats_bot.config import get_settings
+from call_stats_bot.employee_roster import EmployeeRoster
 from call_stats_bot.roles import load_roles
 from call_stats_bot.store import CallStore
+from call_stats_bot.substitutions import Substitution, SubstitutionService
 
 
 router = APIRouter()
+
+
+class SubstitutionPreviewRequest(BaseModel):
+    source_extension: str
+    target_extension: str
+    ends_at: datetime
 
 
 def verify_telegram_init_data(
@@ -72,6 +82,30 @@ def require_admin(init_data: str = Depends(_init_data)) -> dict:
 
 def _store() -> CallStore:
     return CallStore(get_settings().database_target)
+
+
+def _substitution_runtime(request: Request) -> tuple[SubstitutionService, EmployeeRoster]:
+    service = getattr(request.app.state, "substitution_service", None)
+    roster = getattr(request.app.state, "employee_roster", None)
+    if service is None or roster is None:
+        raise HTTPException(status_code=503, detail="Bitrix24 integration is not configured")
+    return service, roster
+
+
+def _public_substitution(service: SubstitutionService, operation: Substitution) -> dict[str, Any]:
+    counts = service.store.counts(operation.id)
+    total = sum(counts.values())
+    return {
+        "id": operation.id,
+        "source_extension": operation.source_extension,
+        "target_extension": operation.target_extension,
+        "source_name": operation.source_name,
+        "target_name": operation.target_name,
+        "ends_at": operation.ends_at.isoformat(),
+        "status": operation.status,
+        "counts": counts,
+        "total": total,
+    }
 
 
 def _public_call(item: dict) -> dict:
@@ -194,3 +228,123 @@ async def call_recording(
         media_type=response.headers.get("content-type", "audio/mpeg").split(";", 1)[0],
         background=BackgroundTask(_close_recording, response, client),
     )
+
+
+@router.get("/api/support/substitutions")
+async def substitutions(
+    request: Request, _: dict = Depends(require_admin),
+) -> dict:
+    service, roster = _substitution_runtime(request)
+    employees = [
+        {
+            "extension": row.extension,
+            "name": row.name,
+            "active": row.active,
+        }
+        for row in await roster.rows()
+    ]
+    operations = [
+        _public_substitution(service, operation)
+        for operation in service.store.recent(30)
+        if operation.status != "cancelled"
+    ]
+    return {"employees": employees, "operations": operations}
+
+
+@router.post("/api/support/substitutions/preview")
+async def preview_substitution(
+    payload: SubstitutionPreviewRequest,
+    request: Request,
+    admin: dict = Depends(require_admin),
+) -> dict:
+    service, roster = _substitution_runtime(request)
+    settings = get_settings()
+    mapping = settings.telephony_bitrix_map
+    source_extension = payload.source_extension.strip()
+    target_extension = payload.target_extension.strip()
+    if source_extension not in mapping or target_extension not in mapping:
+        raise HTTPException(status_code=400, detail="Выбран сотрудник вне списка телефонии")
+    if source_extension == target_extension:
+        raise HTTPException(status_code=400, detail="Выберите разных сотрудников")
+    ends_at = payload.ends_at
+    if ends_at.tzinfo is None:
+        raise HTTPException(status_code=400, detail="Дата возврата должна содержать часовой пояс")
+    if ends_at.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Дата возврата должна быть в будущем")
+
+    rows = {row.extension: row for row in await roster.rows()}
+    source = rows.get(source_extension)
+    target = rows.get(target_extension)
+    if source is None:
+        raise HTTPException(status_code=400, detail="У исходного сотрудника нет активных сделок")
+    if target is None or not target.active:
+        raise HTTPException(status_code=400, detail="Замещающий сотрудник уволен или неактивен")
+
+    try:
+        service.store.cancel_drafts_by_creator(int(admin["id"]))
+        operation = service.store.create_draft(
+            source_user_id=mapping[source_extension],
+            target_user_id=mapping[target_extension],
+            source_name=source.name,
+            target_name=target.name,
+            source_extension=source_extension,
+            target_extension=target_extension,
+            ends_at=ends_at,
+            created_by=int(admin["id"]),
+        )
+        try:
+            await service.preview(operation)
+        except Exception:
+            service.store.cancel_draft(operation.id)
+            raise
+        return _public_substitution(service, service.store.get(operation.id))
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Не удалось получить сделки из Bitrix24") from exc
+
+
+@router.post("/api/support/substitutions/{operation_id}/confirm")
+async def confirm_substitution(
+    operation_id: str,
+    request: Request,
+    _: dict = Depends(require_admin),
+) -> dict:
+    service, _ = _substitution_runtime(request)
+    try:
+        operation = service.store.get(operation_id)
+        await service.activate(operation)
+        return _public_substitution(service, service.store.get(operation.id))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/api/support/substitutions/{operation_id}/cancel")
+async def cancel_substitution(
+    operation_id: str,
+    request: Request,
+    _: dict = Depends(require_admin),
+) -> dict:
+    service, _ = _substitution_runtime(request)
+    try:
+        service.store.cancel_draft(operation_id)
+        return {"status": "cancelled"}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/api/support/substitutions/{operation_id}/restore")
+async def restore_substitution(
+    operation_id: str,
+    request: Request,
+    _: dict = Depends(require_admin),
+) -> dict:
+    service, _ = _substitution_runtime(request)
+    try:
+        operation = service.store.get(operation_id)
+        await service.start_restore(operation)
+        return _public_substitution(service, service.store.get(operation.id))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

@@ -186,6 +186,14 @@ class SubstitutionStore:
         if cursor.rowcount != 1:
             raise ValueError("Only a draft can be cancelled")
 
+    def cancel_drafts_by_creator(self, created_by: int) -> None:
+        """Release any abandoned preview before the administrator starts another one."""
+        with self._connect() as db:
+            db.execute(
+                "UPDATE substitutions SET status='cancelled' WHERE created_by=? AND status='draft'",
+                (created_by,),
+            )
+
     def start_wizard(self, admin_id: int, chat_id: int) -> TelegramWizard:
         with self._connect() as db:
             db.execute(
